@@ -699,13 +699,17 @@ MuseScore {
             // Tie split-continuation notes to the previous note
             if (ev._split && prevNote && prevEv) {
                 if (ev.type === "note" && prevEv.type === "note" && ev.midi === prevEv.midi) {
-                    // Must select the note before running the tie command
                     try {
-                        curScore.selection.select(addedNote);
-                        curScore.runCommand("tie");
+                        // Select the previous chord and current chord, then tie them
+                        var prevChord = prevNote.chord;
+                        var curChord = addedNote.chord;
+                        if (prevChord && curChord) {
+                            curScore.selection.select(prevChord);
+                            curScore.selection.select(curChord, true);
+                            cmd("tie");
+                        }
                     } catch (e) {
-                        log("tie command failed: " + e);
-                        try { curScore.runCommand("pad-tie"); } catch (e2) { }
+                        log("tie failed: " + e);
                     }
                 }
             }
