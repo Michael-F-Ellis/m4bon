@@ -450,7 +450,57 @@ MuseScore {
             }
         }
 
-        return events;
+        return splitNonStandardDurations(events);
+    }
+
+    /**
+     * Split non-standard durations (e.g. 5/8) into standard note values
+     * that sum to the same total (e.g. 1/2 + 1/8).  This ensures every
+     * setDuration(z,n) call uses a note value MuseScore can render.
+     *
+     * Events that come from a split are deep-copies of the original,
+     * producing tied notes of the same pitch in the output.
+     */
+    function splitNonStandardDurations(events) {
+        var result = [];
+        for (var i = 0; i < events.length; i++) {
+            var ev = events[i];
+            if (ev.type !== "note" && ev.type !== "chord") {
+                result.push(ev);
+                continue;
+            }
+            var dur = ev.nominal || ev.duration;
+            if (isStandardDuration(dur.num, dur.den)) {
+                result.push(ev);
+                continue;
+            }
+            // Greedy split: subtract largest standard note values first
+            var remains = dur.num / dur.den;
+            var standards = [
+                {num:1, den:2}, {num:1, den:4}, {num:1, den:8},
+                {num:1, den:16}, {num:1, den:32}, {num:1, den:64},
+                {num:1, den:128}
+            ];
+            var first = true;
+            while (remains > 0.00001) {
+                for (var si = 0; si < standards.length; si++) {
+                    var sv = standards[si].num / standards[si].den;
+                    if (remains >= sv - 0.00001) {
+                        var ne = {};
+                        for (var k in ev) ne[k] = ev[k];
+                        ne.duration = {num: standards[si].num, den: standards[si].den};
+                        if (ev.nominal)
+                            ne.nominal = {num: standards[si].num, den: standards[si].den};
+                        ne._split = first ? undefined : true; // mark continuation
+                        result.push(ne);
+                        remains -= sv;
+                        first = false;
+                        break;
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     /**
