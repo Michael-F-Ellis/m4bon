@@ -650,9 +650,6 @@ MuseScore {
         cursor.track = 0;  // Staff 0, voice 0
         cursor.rewind(1);  // current cursor position (or selection start)
 
-        // Track the first Note object of each split group for tie creation
-        var tieSources = [];
-
         curScore.startCmd();
 
         var count = 0;
@@ -682,32 +679,15 @@ MuseScore {
                 count++;
             } else if (ev.type === "note") {
                 cursor.setDuration(z, n);
-                var added = cursor.addNote(ev.midi, false);
-                // If this is the first fragment of a split, save the Note ref
-                if (ev._split === undefined && i + 1 < events.length && events[i + 1]._split) {
-                    tieSources.push(added);
-                }
+                cursor.addNote(ev.midi, false);
                 count++;
             } else if (ev.type === "chord") {
                 cursor.setDuration(z, n);
-                var first = cursor.addNote(ev.midis[0], false);
+                cursor.addNote(ev.midis[0], false);
                 for (var p = 1; p < ev.midis.length; p++) {
                     cursor.addNote(ev.midis[p], true);
                 }
-                if (ev._split === undefined && i + 1 < events.length && events[i + 1]._split) {
-                    tieSources.push(first);
-                }
                 count++;
-            }
-        }
-
-        // Create ties: select each source Note and dispatch
-        for (var t = 0; t < tieSources.length; t++) {
-            try {
-                curScore.selection.select(tieSources[t]);
-                cmd("tie");
-            } catch (e) {
-                log("tie creation failed: " + e);
             }
         }
 
