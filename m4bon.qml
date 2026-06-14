@@ -650,6 +650,9 @@ MuseScore {
         cursor.track = 0;  // Staff 0, voice 0
         cursor.rewind(1);  // current cursor position (or selection start)
 
+        // Queue of {prevChord, curChord} pairs to tie after the command
+        var tiePairs = [];
+
         curScore.startCmd();
 
         var count = 0;
@@ -673,35 +676,66 @@ MuseScore {
             z /= g;
             n /= g;
 
+            var addedChord = null;
+
             if (ev.type === "rest") {
                 cursor.setDuration(z, n);
                 cursor.addRest();
                 count++;
             } else if (ev.type === "note") {
                 cursor.setDuration(z, n);
-                if (ev._split) {
-                    // Split continuation: cmd("tie") auto-creates a tied note
-                    // at the cursor position with the currently set duration.
-                    cmd("tie");
-                } else {
-                    cursor.addNote(ev.midi, false);
-                }
+                var addedNote = cursor.addNote(ev.midi, false);
+                addedChord = addedNote ? addedNote.chord : null;
                 count++;
             } else if (ev.type === "chord") {
                 cursor.setDuration(z, n);
-                if (ev._split) {
-                    cmd("tie");
-                } else {
-                    cursor.addNote(ev.midis[0], false);
-                    for (var p = 1; p < ev.midis.length; p++) {
-                        cursor.addNote(ev.midis[p], true);
-                    }
+                var firstNote = cursor.addNote(ev.midis[0], false);
+                for (var p = 1; p < ev.midis.length; p++) {
+                    cursor.addNote(ev.midis[p], true);
                 }
+                addedChord = firstNote ? firstNote.chord : null;
                 count++;
+            }
+
+            // If this is a split continuation, queue the tie pair
+            if (ev._split && addedChord) {
+                // Find the previous chord by scanning backward through events
+                // The prevChord was stored during the previous iteration
+                if (tiePairs.length > 0) {
+                    // We already have a pair in progress — update its curChord
+                    tiePairs[tiePairs.length - 1].curChord = addedChord;
+                }
+            } else if (ev._split === undefined && addedChord && i + 1 < events.length && events[i + 1]._split) {
+                // This is the first fragment of a split — start a new pair
+                tiePairs.push({prevChord: addedChord, curChord: null});
             }
         }
 
         curScore.endCmd();
+
+        // Process tie pairs in a separate command
+        if (tiePairs.length > 0) {
+            curScore.startCmd();
+            for (var tp = 0; tp < tiePairs.length; tp++) {
+                var pair = tiePairs[tp];
+                if (pair.prevChord && pair.curChord) {
+                    try {
+                        curScore.selection.select(pair.prevChord);
+                        curScore.selection.select(pair.curChord, true);
+                        cmd("tie");
+                    } catch (e) {
+                        log("tie failed: " + e);
+                    }
+                }
+            }
+            curScore.endCmd();
+        }
+
+        lastInserted = events;
+        lastNoteCount = count;
+
+        return { ok: true, msg: "Inserted " + count + " note(s)" };
+    }
 
         lastInserted = events;
         lastNoteCount = count;
