@@ -16,7 +16,7 @@ MuseScore {
     id: plugin
     title: "m4bon"
     description: "Beat-oriented note entry for MuseScore 4"
-    version: "0.5.0"
+    version: "0.6.0"
     categoryCode: "composing-arranging-tools"
     thumbnailName: ""
 
