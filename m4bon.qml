@@ -737,12 +737,6 @@ MuseScore {
         return { ok: true, msg: "Inserted " + count + " note(s)" };
     }
 
-        lastInserted = events;
-        lastNoteCount = count;
-
-        return { ok: true, msg: "Inserted " + count + " note(s)" };
-    }
-
     // ---- UI actions ----
 
     function handleSend() {
