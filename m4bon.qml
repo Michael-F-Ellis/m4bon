@@ -653,8 +653,6 @@ MuseScore {
         curScore.startCmd();
 
         var count = 0;
-        var prevNote = null;
-        var prevEv = null;
         for (var i = 0; i < events.length; i++) {
             var ev = events[i];
 
@@ -664,8 +662,6 @@ MuseScore {
                     fraction(ev.ratioNum, ev.ratioDen),
                     fraction(ev.totalNum, ev.totalDen)
                 );
-                prevNote = null;
-                prevEv = null;
                 continue;
             }
 
@@ -677,49 +673,31 @@ MuseScore {
             z /= g;
             n /= g;
 
-            var addedNote = null;
-
             if (ev.type === "rest") {
                 cursor.setDuration(z, n);
                 cursor.addRest();
                 count++;
             } else if (ev.type === "note") {
                 cursor.setDuration(z, n);
-                addedNote = cursor.addNote(ev.midi, false);
+                if (ev._split) {
+                    // Split continuation: cmd("tie") auto-creates a tied note
+                    // at the cursor position with the currently set duration.
+                    cmd("tie");
+                } else {
+                    cursor.addNote(ev.midi, false);
+                }
                 count++;
             } else if (ev.type === "chord") {
                 cursor.setDuration(z, n);
-                addedNote = cursor.addNote(ev.midis[0], false);
-                for (var p = 1; p < ev.midis.length; p++) {
-                    cursor.addNote(ev.midis[p], true);
-                }
-                count++;
-            }
-
-            // Tie split-continuation notes to the previous note
-            if (ev._split && prevNote && prevEv) {
-                if (ev.type === "note" && prevEv.type === "note" && ev.midi === prevEv.midi) {
-                    try {
-                        // Select the previous chord and current chord, then tie them
-                        var prevChord = prevNote.chord;
-                        var curChord = addedNote.chord;
-                        if (prevChord && curChord) {
-                            curScore.selection.select(prevChord);
-                            curScore.selection.select(curChord, true);
-                            cmd("tie");
-                        }
-                    } catch (e) {
-                        log("tie failed: " + e);
+                if (ev._split) {
+                    cmd("tie");
+                } else {
+                    cursor.addNote(ev.midis[0], false);
+                    for (var p = 1; p < ev.midis.length; p++) {
+                        cursor.addNote(ev.midis[p], true);
                     }
                 }
-            }
-
-            if (addedNote) {
-                prevNote = addedNote;
-                prevEv = ev;
-            } else {
-                prevNote = null;
-                prevEv = null;
+                count++;
             }
         }
 
