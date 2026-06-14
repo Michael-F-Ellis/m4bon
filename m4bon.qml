@@ -653,6 +653,8 @@ MuseScore {
         curScore.startCmd();
 
         var count = 0;
+        var prevNote = null;
+        var prevEv = null;
         for (var i = 0; i < events.length; i++) {
             var ev = events[i];
 
@@ -662,6 +664,8 @@ MuseScore {
                     fraction(ev.ratioNum, ev.ratioDen),
                     fraction(ev.totalNum, ev.totalDen)
                 );
+                prevNote = null;
+                prevEv = null;
                 continue;
             }
 
@@ -673,20 +677,44 @@ MuseScore {
             z /= g;
             n /= g;
 
+            var addedNote = null;
+
             if (ev.type === "rest") {
                 cursor.setDuration(z, n);
                 cursor.addRest();
                 count++;
             } else if (ev.type === "note") {
                 cursor.setDuration(z, n);
-                cursor.addNote(ev.midi, false);
+                addedNote = cursor.addNote(ev.midi, false);
                 count++;
             } else if (ev.type === "chord") {
                 cursor.setDuration(z, n);
-                for (var p = 0; p < ev.midis.length; p++) {
-                    cursor.addNote(ev.midis[p], p > 0);
+                addedNote = cursor.addNote(ev.midis[0], false);
+                for (var p = 1; p < ev.midis.length; p++) {
+                    cursor.addNote(ev.midis[p], true);
                 }
                 count++;
+            }
+
+            // Tie split-continuation notes to the previous note
+            if (ev._split && prevNote && prevEv) {
+                if ((ev.type === "note" && prevEv.type === "note" && ev.midi === prevEv.midi) ||
+                    (ev.type === "chord" && prevEv.type === "chord")) {
+                    try {
+                        var tie = newElement(Element.TIE);
+                        prevNote.add(tie);
+                    } catch (e) {
+                        log("Could not create tie: " + e);
+                    }
+                }
+            }
+
+            if (addedNote) {
+                prevNote = addedNote;
+                prevEv = ev;
+            } else {
+                prevNote = null;
+                prevEv = null;
             }
         }
 
