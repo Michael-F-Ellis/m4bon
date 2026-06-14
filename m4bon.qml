@@ -352,6 +352,29 @@ MuseScore {
             if (posCount === 0) continue;
 
             var activeCount = countActivePositions(group.slots);
+
+            // Sustain-only group: standalone "-" extends prior event by full group duration
+            if (activeCount === 0 && group.slots.length > 0) {
+                if (events.length === 0)
+                    return {error: "sustain with no prior note"};
+                var sdNum = group.multiplier * beat.num;
+                var sdDen = beat.den;
+                var last = events[events.length - 1];
+                last.duration.num = last.duration.num * sdDen + sdNum * last.duration.den;
+                last.duration.den = last.duration.den * sdDen;
+                var gv = gcd(last.duration.num, last.duration.den);
+                last.duration.num /= gv;
+                last.duration.den /= gv;
+                if (last.nominal) {
+                    last.nominal.num = last.nominal.num * sdDen + sdNum * last.nominal.den;
+                    last.nominal.den = last.nominal.den * sdDen;
+                    var ng2 = gcd(last.nominal.num, last.nominal.den);
+                    last.nominal.num /= ng2;
+                    last.nominal.den /= ng2;
+                }
+                continue;
+            }
+
             if (activeCount === 0) continue;
 
             // Total group time = multiplier × beat
