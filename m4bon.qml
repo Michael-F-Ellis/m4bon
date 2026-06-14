@@ -698,15 +698,22 @@ MuseScore {
 
             // Tie split-continuation notes to the previous note
             if (ev._split && prevNote && prevEv) {
-                if ((ev.type === "note" && prevEv.type === "note" && ev.midi === prevEv.midi) ||
-                    (ev.type === "chord" && prevEv.type === "chord")) {
+                if (ev.type === "note" && prevEv.type === "note" && ev.midi === prevEv.midi) {
+                    // Try multiple approaches to create the tie
                     try {
-                        var tie = newElement(Element.TIE);
-                        prevNote.add(tie);
-                    } catch (e) {
-                        log("Could not create tie: " + e);
+                        prevNote.tieFor = addedNote;
+                    } catch (e1) {
+                        try {
+                            var tie = newElement(Element.TIE);
+                            tie.startNote = prevNote;
+                            tie.endNote = addedNote;
+                            prevNote.add(tie);
+                        } catch (e2) {
+                            log("Tie creation failed: " + e2);
+                        }
                     }
                 }
+
             }
 
             if (addedNote) {
