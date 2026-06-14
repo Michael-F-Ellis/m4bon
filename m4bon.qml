@@ -650,8 +650,8 @@ MuseScore {
         cursor.track = 0;  // Staff 0, voice 0
         cursor.rewind(1);  // current cursor position (or selection start)
 
-        // Track {tick, selectNote} pairs for tie pairs that need creation
-        var tieItems = [];
+        // Track the first Note object of each split group for tie creation
+        var tieSources = [];
 
         curScore.startCmd();
 
@@ -681,49 +681,33 @@ MuseScore {
                 cursor.addRest();
                 count++;
             } else if (ev.type === "note") {
-                var noteTick = cursor.tick;
                 cursor.setDuration(z, n);
-                cursor.addNote(ev.midi, false);
-
-                // If this is the first fragment of a split, record its tick
-                // for tie creation after all notes are in the score.
+                var added = cursor.addNote(ev.midi, false);
+                // If this is the first fragment of a split, save the Note ref
                 if (ev._split === undefined && i + 1 < events.length && events[i + 1]._split) {
-                    tieItems.push({tick: noteTick});
+                    tieSources.push(added);
                 }
                 count++;
             } else if (ev.type === "chord") {
-                var chordTick = cursor.tick;
                 cursor.setDuration(z, n);
-                var firstNote = cursor.addNote(ev.midis[0], false);
+                var first = cursor.addNote(ev.midis[0], false);
                 for (var p = 1; p < ev.midis.length; p++) {
                     cursor.addNote(ev.midis[p], true);
                 }
                 if (ev._split === undefined && i + 1 < events.length && events[i + 1]._split) {
-                    tieItems.push({tick: chordTick});
+                    tieSources.push(first);
                 }
                 count++;
             }
         }
 
-        // All notes are in the score.  Now create ties by positioning the
-        // cursor at each source note's tick and tying it forward.
-        if (tieItems.length > 0) {
-            var tieCursor = curScore.newCursor();
-            tieCursor.track = cursor.track;
-            for (var ti = 0; ti < tieItems.length; ti++) {
-                tieCursor.rewind(0);
-                tieCursor.tick = tieItems[ti].tick;    // seek to source note
-                if (tieCursor.element && tieCursor.element.type === Element.CHORD) {
-                    var chord = tieCursor.element;
-                    if (chord.notes && chord.notes.length > 0) {
-                        try {
-                            curScore.selection.select(chord.notes[0]);
-                            cmd("tie");
-                        } catch (e) {
-                            log("tie failed at tick " + tieItems[ti].tick + ": " + e);
-                        }
-                    }
-                }
+        // Create ties: select each source Note and dispatch
+        for (var t = 0; t < tieSources.length; t++) {
+            try {
+                curScore.selection.select(tieSources[t]);
+                cmd("tie");
+            } catch (e) {
+                log("tie creation failed: " + e);
             }
         }
 
