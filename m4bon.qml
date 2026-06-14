@@ -650,10 +650,12 @@ MuseScore {
         cursor.track = 0;  // Staff 0, voice 0
         cursor.rewind(1);  // current cursor position (or selection start)
 
+        // Track {tick, selectNote} pairs for tie pairs that need creation
+        var tieItems = [];
+
         curScore.startCmd();
 
         var count = 0;
-        var prevNoteTick = -1;
         for (var i = 0; i < events.length; i++) {
             var ev = events[i];
 
@@ -663,7 +665,6 @@ MuseScore {
                     fraction(ev.ratioNum, ev.ratioDen),
                     fraction(ev.totalNum, ev.totalDen)
                 );
-                prevNoteTick = -1;
                 continue;
             }
 
@@ -678,24 +679,17 @@ MuseScore {
             if (ev.type === "rest") {
                 cursor.setDuration(z, n);
                 cursor.addRest();
-                prevNoteTick = -1;
                 count++;
             } else if (ev.type === "note") {
-                var noteTick = cursor.tick; // before adding — this is where the note starts
+                var noteTick = cursor.tick;
                 cursor.setDuration(z, n);
                 cursor.addNote(ev.midi, false);
-                var endTick = cursor.tick;  // after adding — where the note ends
 
-                // Split continuation: select range and tie to previous fragment
-                if (ev._split && prevNoteTick >= 0) {
-                    try {
-                        curScore.selection.selectRange(prevNoteTick, endTick, 0, 1);
-                        cmd("tie");
-                    } catch (e) {
-                        log("tie failed: " + e);
-                    }
+                // If this is the first fragment of a split, record its tick
+                // for tie creation after all notes are in the score.
+                if (ev._split === undefined && i + 1 < events.length && events[i + 1]._split) {
+                    tieItems.push({tick: noteTick});
                 }
-                prevNoteTick = noteTick;
                 count++;
             } else if (ev.type === "chord") {
                 var chordTick = cursor.tick;
@@ -704,18 +698,32 @@ MuseScore {
                 for (var p = 1; p < ev.midis.length; p++) {
                     cursor.addNote(ev.midis[p], true);
                 }
-                var chordEndTick = cursor.tick;
+                if (ev._split === undefined && i + 1 < events.length && events[i + 1]._split) {
+                    tieItems.push({tick: chordTick});
+                }
+                count++;
+            }
+        }
 
-                if (ev._split && prevNoteTick >= 0) {
-                    try {
-                        curScore.selection.selectRange(prevNoteTick, chordEndTick, 0, 1);
-                        cmd("tie");
-                    } catch (e) {
-                        log("tie failed: " + e);
+        // All notes are in the score.  Now create ties by positioning the
+        // cursor at each source note's tick and tying it forward.
+        if (tieItems.length > 0) {
+            var tieCursor = curScore.newCursor();
+            tieCursor.track = cursor.track;
+            for (var ti = 0; ti < tieItems.length; ti++) {
+                tieCursor.rewind(0);
+                tieCursor.tick = tieItems[ti].tick;    // seek to source note
+                if (tieCursor.element && tieCursor.element.type === Element.CHORD) {
+                    var chord = tieCursor.element;
+                    if (chord.notes && chord.notes.length > 0) {
+                        try {
+                            curScore.selection.select(chord.notes[0]);
+                            cmd("tie");
+                        } catch (e) {
+                            log("tie failed at tick " + tieItems[ti].tick + ": " + e);
+                        }
                     }
                 }
-                prevNoteTick = chordTick;
-                count++;
             }
         }
 
