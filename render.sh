@@ -31,7 +31,7 @@ else
 fi
 
 echo "$XML" | verovio --stdin -f xml -o - -s 120 --adjust-page-height 2>/dev/null \
-    | rsvg-convert -o /tmp/m4bon-render.png
+    | rsvg-convert -b white -o /tmp/m4bon-render.png
 
 echo "Output: /tmp/m4bon-render.png"
 open /tmp/m4bon-render.png
