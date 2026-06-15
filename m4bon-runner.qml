@@ -6,7 +6,7 @@ MuseScore {
     id: plugin
     title: "m4bon-runner"
     description: "Headless runner for m4bon CLI testing"
-    version: "0.6.0"
+    version: "0.6.1"
     categoryCode: "composing-arranging-tools"
     pluginType: "dialog"
     width: 1

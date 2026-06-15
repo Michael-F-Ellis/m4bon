@@ -226,3 +226,47 @@ func TestCLIInvalidInput(t *testing.T) {
 		t.Errorf("expected error for empty input")
 	}
 }
+
+func TestCLIDottedNote(t *testing.T) {
+	// "a -b" should produce a dotted quarter A (3/8) + eighth B
+	out, err := exec.Command("./m4bon", "a -b").Output()
+	if err != nil {
+		t.Fatalf("m4bon failed: %v", err)
+	}
+	xml := string(out)
+
+	if !strings.Contains(xml, `<duration>720</duration>`) {
+		t.Errorf("expected dotted quarter (720 ticks) for A")
+	}
+	if !strings.Contains(xml, `<dot></dot>`) {
+		t.Errorf("expected dot element for dotted quarter")
+	}
+	if !strings.Contains(xml, `<duration>240</duration>`) {
+		t.Errorf("expected eighth (240 ticks) for B")
+	}
+}
+
+func TestCLIBarlineSplit(t *testing.T) {
+	// "a b - -c" - B extends across the invisible barline (beat 2→3)
+	// Should split as quarter B tied to dotted quarter B
+	out, err := exec.Command("./m4bon", "a b - -c").Output()
+	if err != nil {
+		t.Fatalf("m4bon failed: %v", err)
+	}
+	xml := string(out)
+
+	// Two B notes: quarter (480) tied to dotted quarter (720)
+	if !strings.Contains(xml, `<step>B</step>`) {
+		t.Errorf("expected B notes")
+	}
+	// Count tie elements: should have tie-start on quarter B,
+	// tie-stop on dotted quarter B
+	startCount := strings.Count(xml, `<tie type="start">`)
+	stopCount := strings.Count(xml, `<tie type="stop">`)
+	if startCount < 1 {
+		t.Errorf("expected at least 1 tie start, got %d", startCount)
+	}
+	if stopCount < 1 {
+		t.Errorf("expected at least 1 tie stop, got %d", stopCount)
+	}
+}

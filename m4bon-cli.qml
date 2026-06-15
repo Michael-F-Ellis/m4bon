@@ -16,7 +16,7 @@ MuseScore {
     id: plugin
     title: "m4bon-cli"
     description: "Non-interactive m4bon for CLI scripting"
-    version: "0.6.0"
+    version: "0.6.1"
     categoryCode: "composing-arranging-tools"
 
     // Allow overriding the DSL path (default: /tmp/m4bon-dsl.txt)

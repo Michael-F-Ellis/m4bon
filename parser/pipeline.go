@@ -156,7 +156,97 @@ func resolveDurations(groups []ParseResult, beat BeatDuration) ([]Event, error) 
 		}
 	}
 
-	return splitNonStandardDurations(events), nil
+	return events, nil
+}
+
+// splitAtBarline splits notes and chords that cross the invisible barline
+// at the midpoint of the measure (between beats 2 and 3 in 4/4, or the
+// equivalent in other meters). Notes that span the barline are split into
+// two tied events so no single note-value crosses that boundary.
+func splitAtBarline(events []Event, timeNum, timeDen int) []Event {
+	if timeDen == 0 {
+		return events
+	}
+
+	// barline = timeNum / (2 * timeDen) of a whole note
+	bNum := timeNum
+	bDen := timeDen * 2
+
+	var result []Event
+	// Running position as fraction of a whole note
+	pNum := 0
+	pDen := 1
+
+	for _, ev := range events {
+		if ev.Type != EventNote && ev.Type != EventChord {
+			result = append(result, ev)
+			// Advance position
+			pNum = pNum*ev.Duration.Den + ev.Duration.Num*pDen
+			pDen = pDen * ev.Duration.Den
+			g := gcd(pNum, pDen)
+			pNum /= g
+			pDen /= g
+			continue
+		}
+
+		dNum := ev.Duration.Num
+		dDen := ev.Duration.Den
+
+		// start = pNum/pDen, end = pNum/pDen + dNum/dDen
+		// Check: is start < barline < end ?
+		// start < barline: pNum/pDen < bNum/bDen  → pNum*bDen < bNum*pDen
+		// end > barline:  (pNum*dDen + dNum*pDen) / (pDen*dDen) > bNum/bDen
+		//                → (pNum*dDen + dNum*pDen) * bDen > bNum * pDen * dDen
+		startLessBarline := pNum*bDen < bNum*pDen
+		endGreaterBarline := (pNum*dDen+dNum*pDen)*bDen > bNum*pDen*dDen
+
+		if !startLessBarline || !endGreaterBarline {
+			// Doesn't cross the barline
+			result = append(result, ev)
+			pNum = pNum*dDen + dNum*pDen
+			pDen = pDen * dDen
+			g := gcd(pNum, pDen)
+			pNum /= g
+			pDen /= g
+			continue
+		}
+
+		// Split at barline
+		// before = barline - start = bNum/bDen - pNum/pDen
+		//       = (bNum*pDen - pNum*bDen) / (bDen*pDen)
+		beforeNum := bNum*pDen - pNum*bDen
+		beforeDen := bDen * pDen
+		g1 := gcd(beforeNum, beforeDen)
+		beforeNum /= g1
+		beforeDen /= g1
+
+		// after = duration - before = dNum/dDen - beforeNum/beforeDen
+		//      = (dNum*beforeDen - beforeNum*dDen) / (dDen*beforeDen)
+		afterNum := dNum*beforeDen - beforeNum*dDen
+		afterDen := dDen * beforeDen
+		g2 := gcd(afterNum, afterDen)
+		afterNum /= g2
+		afterDen /= g2
+
+		ev1 := ev
+		ev1.Duration = Fraction{Num: beforeNum, Den: beforeDen}
+		// ev1.Split retains its original value (false for first fragment)
+
+		ev2 := ev
+		ev2.Duration = Fraction{Num: afterNum, Den: afterDen}
+		ev2.Split = true
+
+		result = append(result, ev1, ev2)
+
+		// Advance past ev2
+		pNum = pNum*dDen + dNum*pDen
+		pDen = pDen * dDen
+		g := gcd(pNum, pDen)
+		pNum /= g
+		pDen /= g
+	}
+
+	return result
 }
 
 // --- Split non-standard durations ---
@@ -382,6 +472,13 @@ func ParseDSL(text string) DSLResult {
 	if err != nil {
 		return DSLResult{Err: err}
 	}
+
+	// Split notes that would cross the invisible barline (e.g. half note
+	// starting on beat 2 in 4/4 must become two tied quarters).
+	events = splitAtBarline(events, timeNum, timeDen)
+
+	// Split any remaining non-standard durations into standard note values.
+	events = splitNonStandardDurations(events)
 
 	resolveOctaves(events)
 

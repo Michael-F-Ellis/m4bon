@@ -68,6 +68,7 @@ type NoteEl struct {
 	Duration          int              `xml:"duration"`
 	Tie               []TieEl          `xml:"tie,omitempty"`
 	Type              string           `xml:"type"`
+	Dots              []DotEl          `xml:"dot,omitempty"`
 	Accidental        string           `xml:"accidental,omitempty"`
 	TimeModification  *TimeMod         `xml:"time-modification,omitempty"`
 	Beams             []BeamEl         `xml:"beam,omitempty"`
@@ -92,6 +93,8 @@ type RestEl struct{}
 type TieEl struct {
 	Type string `xml:"type,attr"`
 }
+
+type DotEl struct{}
 
 type TiedEl struct {
 	Type string `xml:"type,attr"`
@@ -178,6 +181,31 @@ func noteTypeForDuration(f parser.Fraction) string {
 	return ""
 }
 
+func isPowerOf2(n int) bool {
+	return n > 0 && (n&(n-1)) == 0
+}
+
+// dotCount returns the number of augmentation dots for a duration fraction.
+func dotCount(f parser.Fraction) int {
+	n := f.Num
+	d := f.Den
+	g := gcd(n, d)
+	n /= g
+	d /= g
+	if !isPowerOf2(d) {
+		return 0
+	}
+	switch n {
+	case 3:
+		return 1
+	case 7:
+		return 2
+	case 15:
+		return 3
+	}
+	return 0
+}
+
 func gcd(a, b int) int {
 	a = int(math.Abs(float64(a)))
 	b = int(math.Abs(float64(b)))
@@ -185,6 +213,14 @@ func gcd(a, b int) int {
 		a, b = b, a%b
 	}
 	return a
+}
+
+// makeDots returns a slice of DotEl for the given dot count.
+func makeDots(n int) []DotEl {
+	if n <= 0 {
+		return nil
+	}
+	return make([]DotEl, n)
 }
 
 // durationToTicks converts a fraction of a whole note to MIDI ticks (DPPQ-based).
@@ -323,6 +359,7 @@ func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, 
 
 		durTicks := durationToTicks(ev.Duration)
 		noteType := noteTypeForDuration(ev.Duration)
+		dotCount_ := dotCount(ev.Duration)
 
 		// For tuplet notes, also compute from nominal
 		if ev.Nominal != nil {
@@ -330,6 +367,8 @@ func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, 
 			if nt != "" {
 				noteType = nt
 			}
+			// Tuplet notes use time-modification, not dots
+			dotCount_ = 0
 		}
 
 		// Determine ties
@@ -394,6 +433,7 @@ func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, 
 				Pitch:      &PitchEl{Step: letter, Octave: midiOct - 1, Alter: ev.Accidental},
 				Duration:   durTicks,
 				Type:       noteType,
+				Dots:       makeDots(dotCount_),
 				Accidental: accidentalDisplay,
 				Tie:        ties,
 				Notations:  notations,
@@ -413,6 +453,7 @@ func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, 
 				Rest:     &RestEl{},
 				Duration: durTicks,
 				Type:     noteType,
+				Dots:     makeDots(dotCount_),
 				Voice:    1,
 				Staff:    1,
 			}
@@ -425,6 +466,7 @@ func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, 
 					Pitch:    &PitchEl{Step: step, Octave: oct, Alter: alter},
 					Duration: durTicks,
 					Type:     noteType,
+					Dots:     makeDots(dotCount_),
 					Chord:    pIdx > 0,
 					Voice:    1,
 					Staff:    1,
