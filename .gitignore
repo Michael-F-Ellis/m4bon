@@ -55,6 +55,9 @@ compile_commands.json
 
 *_qmlcache.qrc
 
+# Notifications
+/notify.sh
+
 # Go
 /m4bon
 *.test

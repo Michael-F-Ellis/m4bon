@@ -18,28 +18,22 @@ import (
 )
 
 func main() {
-	timeSig := flag.String("time", "4/4", "Time signature (e.g. 4/4, 6/8)")
 	inputFile := flag.String("f", "", "Read DSL from file instead of argument")
 	outputFile := flag.String("o", "", "Write MusicXML to file instead of stdout")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: m4bon [options] [dsl]\n\n")
 		fmt.Fprintf(os.Stderr, "Convert m4bon beat-oriented DSL to MusicXML.\n\n")
+		fmt.Fprintf(os.Stderr, "Time and key signatures are specified in the DSL:\n")
+		fmt.Fprintf(os.Stderr, "  M4/4 c d e f     (meter, default 4/4)\n")
+		fmt.Fprintf(os.Stderr, "  KE& M6/8 abc def (key sig + meter)\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  m4bon \"c d e f\"\n")
-		fmt.Fprintf(os.Stderr, "  m4bon -time 6/8 \"abc def\"\n")
+		fmt.Fprintf(os.Stderr, "  m4bon \"KE& M6/8 abc def\"\n")
 		fmt.Fprintf(os.Stderr, "  m4bon -f test/cases/basic-notes.dsl -o out.mxl\n")
 	}
 	flag.Parse()
-
-	// Parse time signature
-	var timeNum, timeDen int
-	n, err := fmt.Sscanf(*timeSig, "%d/%d", &timeNum, &timeDen)
-	if err != nil || n != 2 {
-		fmt.Fprintf(os.Stderr, "Invalid time signature: %s (expected e.g. 4/4)\n", *timeSig)
-		os.Exit(1)
-	}
 
 	// Read DSL
 	var dsl string
@@ -64,7 +58,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	result := parser.ParseDSL(dsl, timeNum, timeDen)
+	result := parser.ParseDSL(dsl)
 	if result.Err != nil {
 		fmt.Fprintf(os.Stderr, "Parse error: %v\n", result.Err)
 		os.Exit(1)
@@ -75,7 +69,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	xml, err := musicxml.Generate(result.Events, timeNum, timeDen)
+	xml, err := musicxml.Generate(result.Events, result.TimeNum, result.TimeDen, result.Key.Fifths)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Generation error: %v\n", err)
 		os.Exit(1)

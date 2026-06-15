@@ -98,7 +98,7 @@ func TestCLIChord(t *testing.T) {
 }
 
 func TestCLICompoundTime(t *testing.T) {
-	out, err := exec.Command("./m4bon", "-time", "6/8", "abc def").Output()
+	out, err := exec.Command("./m4bon", "M6/8 abc def").Output()
 	if err != nil {
 		t.Fatalf("m4bon failed: %v", err)
 	}
@@ -164,9 +164,22 @@ func TestCLIEmptyInput(t *testing.T) {
 	}
 }
 
-func TestCLIInvalidTime(t *testing.T) {
-	err := exec.Command("./m4bon", "-time", "invalid", "c").Run()
+func TestCLIKeySignature(t *testing.T) {
+	out, err := exec.Command("./m4bon", "KE& c d e f").Output()
+	if err != nil {
+		t.Fatalf("m4bon failed: %v", err)
+	}
+	xml := string(out)
+
+	if !strings.Contains(xml, `<fifths>-3</fifths>`) {
+		t.Errorf("expected E-flat major key signature (fifths=-3)")
+	}
+}
+
+func TestCLIInvalidInput(t *testing.T) {
+	// No input should produce error
+	err := exec.Command("./m4bon").Run()
 	if err == nil {
-		t.Errorf("expected error for invalid time signature")
+		t.Errorf("expected error for empty input")
 	}
 }

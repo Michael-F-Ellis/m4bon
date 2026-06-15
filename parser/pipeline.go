@@ -3,6 +3,8 @@ package parser
 import (
 	"fmt"
 	"math"
+	"regexp"
+	"strings"
 )
 
 // --- Duration resolution ---
@@ -202,6 +204,86 @@ func splitNonStandardDurations(events []Event) []Event {
 	return result
 }
 
+// --- Directive parsing ---
+
+var keySigMap = map[string]int{
+	"c": 0, "g": 1, "d": 2, "a": 3, "e": 4, "b": 5,
+	"f#": 6, "c#": 7,
+	"f": -1, "b&": -2, "e&": -3, "a&": -4, "d&": -5, "g&": -6, "c&": -7,
+}
+
+// stripDirectives extracts K (key) and M (meter) directives from the start
+// of the DSL string, returning the stripped DSL and parsed metadata.
+func stripDirectives(text string) (stripped string, fifths int, timeNum, timeDen int) {
+	fifths = 0   // default: C major
+	timeNum = 4  // default: 4/4
+	timeDen = 4
+
+	re := regexp.MustCompile(`^(K\S+\s*)?(M\S+\s*)?`)
+	m := re.FindStringSubmatch(text)
+	if m == nil {
+		return text, fifths, timeNum, timeDen
+	}
+
+	directives := ""
+	for i := 1; i < len(m); i++ {
+		directives += strings.TrimSpace(m[i]) + " "
+	}
+	directives = strings.TrimSpace(directives)
+
+	if directives != "" {
+		// Parse K directive
+		for _, part := range strings.Fields(directives) {
+			if strings.HasPrefix(part, "K") && len(part) > 1 {
+				body := strings.ToLower(part[1:])
+				// Map to key signature
+				// Try exact match first, then try various orderings
+				canon := canonicalKey(body)
+				if f, ok := keySigMap[canon]; ok {
+					fifths = f
+				}
+			}
+			if strings.HasPrefix(part, "M") && len(part) > 1 {
+				body := part[1:]
+				if n, err := fmt.Sscanf(body, "%d/%d", &timeNum, &timeDen); err == nil && n == 2 {
+					// parsed OK
+				}
+			}
+		}
+
+		// Remove directives from text
+		text = strings.TrimSpace(re.ReplaceAllString(text, ""))
+	}
+
+	return text, fifths, timeNum, timeDen
+}
+
+// canonicalKey normalizes a key signature body (e.g. "e&", "&e", "eb", "&e")
+// to its canonical form for lookup in keySigMap.
+func canonicalKey(body string) string {
+	// Extract letter and accidentals
+	letter := ""
+	acc := ""
+	for _, ch := range body {
+		if ch >= 'a' && ch <= 'g' {
+			letter = string(ch)
+		} else {
+			switch ch {
+			case '#', '♯':
+				acc += "#"
+			case '&', 'b', '♭':
+				acc += "&"
+			case '%', '♮':
+				acc = ""
+			}
+		}
+	}
+	if letter == "" {
+		return "c"
+	}
+	return letter + acc
+}
+
 // --- Octave resolution ---
 
 var noteOffsets = map[string]int{
@@ -262,8 +344,10 @@ func resolveOctaves(events []Event) {
 // --- Main parse entry point ---
 
 // ParseDSL parses m4bon DSL text into a sequence of events.
-// timeNum/timeDen specify the time signature (default 4/4).
-func ParseDSL(text string, timeNum, timeDen int) DSLResult {
+// Key signature (K...) and meter (M...) directives are parsed from the DSL
+// itself. Defaults: C major, 4/4.
+func ParseDSL(text string) DSLResult {
+	text, fifths, timeNum, timeDen := stripDirectives(text)
 	tokens := tokenize(text)
 	if len(tokens) == 0 {
 		return DSLResult{Err: fmt.Errorf("no input")}
@@ -301,5 +385,10 @@ func ParseDSL(text string, timeNum, timeDen int) DSLResult {
 
 	resolveOctaves(events)
 
-	return DSLResult{Events: events}
+	return DSLResult{
+		Events:  events,
+		Key:     KeySignature{Fifths: fifths},
+		TimeNum: timeNum,
+		TimeDen: timeDen,
+	}
 }

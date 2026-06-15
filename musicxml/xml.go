@@ -42,8 +42,13 @@ type Measure struct {
 
 type Attributes struct {
 	Divisions int     `xml:"divisions"`
+	Key       Key     `xml:"key"`
 	Time      TimeSig `xml:"time"`
 	Clef      Clef    `xml:"clef"`
+}
+
+type Key struct {
+	Fifths int `xml:"fifths"`
 }
 
 type TimeSig struct {
@@ -64,8 +69,9 @@ type NoteEl struct {
 	Tie               []TieEl          `xml:"tie,omitempty"`
 	Type              string           `xml:"type"`
 	TimeModification  *TimeMod         `xml:"time-modification,omitempty"`
-	Staff             int              `xml:"staff,omitempty"`
+	Notations         *Notations       `xml:"notations,omitempty"`
 	Voice             int              `xml:"voice,omitempty"`
+	Staff             int              `xml:"staff,omitempty"`
 }
 
 type PitchEl struct {
@@ -78,6 +84,14 @@ type RestEl struct{}
 
 type TieEl struct {
 	Type string `xml:"type,attr"`
+}
+
+type TiedEl struct {
+	Type string `xml:"type,attr"`
+}
+
+type Notations struct {
+	Tied []TiedEl `xml:"tied,omitempty"`
 }
 
 type TimeMod struct {
@@ -233,8 +247,8 @@ func totalDurationTicks(events []parser.Event) int {
 	return total
 }
 
-// Generate produces a MusicXML string from parsed events and time signature.
-func Generate(events []parser.Event, timeNum, timeDen int) (string, error) {
+// Generate produces a MusicXML string from parsed events, time signature, and key signature.
+func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, error) {
 	beatTicks := DPPQ * 4 / timeDen * timeNum // ticks per beat * beats per measure
 	total := totalDurationTicks(events)
 
@@ -279,25 +293,34 @@ func Generate(events []parser.Event, timeNum, timeDen int) (string, error) {
 
 		// Determine ties
 		var ties []TieEl
+		var tieds []TiedEl
 		if ev.Split {
 			ties = append(ties, TieEl{Type: "stop"})
+			tieds = append(tieds, TiedEl{Type: "stop"})
 		}
 		// Check if next event is a split continuation
 		if i+1 < len(events) && events[i+1].Split &&
 			ev.Type != parser.EventTupletStart {
 			ties = append(ties, TieEl{Type: "start"})
+			tieds = append(tieds, TiedEl{Type: "start"})
+		}
+
+		var notations *Notations
+		if len(tieds) > 0 {
+			notations = &Notations{Tied: tieds}
 		}
 
 		switch ev.Type {
 		case parser.EventNote:
 			step, oct, alter := midiToStep(ev.Midi)
 			ne := NoteEl{
-				Pitch:    &PitchEl{Step: step, Octave: oct, Alter: alter},
-				Duration: durTicks,
-				Type:     noteType,
-				Tie:      ties,
-				Voice:    1,
-				Staff:    1,
+				Pitch:     &PitchEl{Step: step, Octave: oct, Alter: alter},
+				Duration:  durTicks,
+				Type:      noteType,
+				Tie:       ties,
+				Notations: notations,
+				Voice:     1,
+				Staff:     1,
 			}
 			if inTuplet {
 				ne.TimeModification = &TimeMod{
@@ -356,6 +379,7 @@ func Generate(events []parser.Event, timeNum, timeDen int) (string, error) {
 		if m == 0 {
 			meas.Attributes = &Attributes{
 				Divisions: DPPQ,
+				Key:       Key{Fifths: fifths},
 				Time: TimeSig{
 					Beats:    fmt.Sprintf("%d", timeNum),
 					BeatType: fmt.Sprintf("%d", timeDen),

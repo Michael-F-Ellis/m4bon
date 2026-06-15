@@ -71,8 +71,17 @@ type ParseResult struct {
 
 // DSLResult holds the full parse output.
 type DSLResult struct {
-	Events []Event
-	Err    error
+	Events  []Event
+	Key     KeySignature // parsed or default
+	TimeNum int          // parsed or default
+	TimeDen int          // parsed or default
+	Err     error
+}
+
+// KeySignature represents a key signature via its position on the circle of fifths.
+// Positive values = sharps, negative values = flats, zero = C major.
+type KeySignature struct {
+	Fifths int
 }
 
 // --- Helpers ---

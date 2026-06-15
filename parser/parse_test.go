@@ -8,7 +8,7 @@ import (
 )
 
 func TestParseBasicNotes(t *testing.T) {
-	r := ParseDSL("c d e f", 4, 4)
+	r := ParseDSL("c d e f")
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -26,7 +26,7 @@ func TestParseBasicNotes(t *testing.T) {
 }
 
 func TestParseSustainChain(t *testing.T) {
-	r := ParseDSL("a - -b c", 4, 4)
+	r := ParseDSL("a - -b c")
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -45,7 +45,7 @@ func TestParseSustainChain(t *testing.T) {
 }
 
 func TestParseTuplet(t *testing.T) {
-	r := ParseDSL("abc", 4, 4)
+	r := ParseDSL("abc")
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -66,7 +66,7 @@ func TestParseTuplet(t *testing.T) {
 }
 
 func TestParseChord(t *testing.T) {
-	r := ParseDSL("(ace)f", 4, 4)
+	r := ParseDSL("(ace)f")
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -82,7 +82,7 @@ func TestParseChord(t *testing.T) {
 }
 
 func TestParseCompoundTime(t *testing.T) {
-	r := ParseDSL("abc def", 6, 8)
+	r := ParseDSL("M6/8 abc def")
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -111,7 +111,7 @@ func TestParseErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
-			r := ParseDSL(tc.dsl, 4, 4)
+			r := ParseDSL(tc.dsl)
 			if r.Err == nil {
 				t.Errorf("expected error for %s", tc.desc)
 			}
@@ -149,7 +149,7 @@ func TestParseDSLFiles(t *testing.T) {
 			if dsl == "" {
 				t.Skip("empty DSL file")
 			}
-			r := ParseDSL(dsl, 4, 4)
+			r := ParseDSL(dsl)
 			if r.Err != nil {
 				t.Fatalf("parse error for %s (%q): %v", name, dsl, r.Err)
 			}

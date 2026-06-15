@@ -124,8 +124,8 @@ Groups pitches into a single chord occupying one position slot. Strictly ascendi
 ## Pipeline
 
 ```
-DSL text → sanitize → tokenize → parseGroup → resolveDurations
-         → splitNonStandardDurations → resolveOctaves → MusicXML
+DSL text → stripDirectives (extract K, M) → sanitize → tokenize → parseGroup
+         → resolveDurations → splitNonStandardDurations → resolveOctaves → MusicXML
 ```
 
 ### Output: MusicXML
@@ -142,11 +142,14 @@ DSL text → sanitize → tokenize → parseGroup → resolveDurations
 Usage: m4bon [options] [dsl]
   -f string    Read DSL from file
   -o string    Write MusicXML to file (default: stdout)
-  -time string Time signature (default "4/4")
+
+Time and key signatures are specified in the DSL via K... and M... directives:
+  m4bon "M4/4 c d e f"
+  m4bon "KE& M6/8 abc def"
 
 Examples:
   m4bon "c d e f"
-  m4bon -time 6/8 "abc def"
+  m4bon "M6/8 abc def"
   m4bon -f test/cases/basic-notes.dsl -o out.mxl
 ```
 
@@ -158,6 +161,7 @@ Examples:
 go build -o m4bon .       # Build (0.5s)
 go test ./...              # Run all tests (0.4s)
 ./m4bon "c d e f"         # Quick test
+./notify.sh "message"     # Send iMessage notification to maintainer
 ```
 
 ---
@@ -179,5 +183,5 @@ go test ./...              # Run all tests (0.4s)
 - Single staff (piano), single voice
 - All notes placed in measure 1 (no multi-measure layout yet)
 - Greedy split doesn't respect engraving rules (cross-bar ties, beat boundaries)
-- No grace notes, pickup measures, key signature, or scale-degree mode
+- Key signature supported via `K` directive in DSL (default C major)
 - `.qml` files are reference only — active development is in Go
