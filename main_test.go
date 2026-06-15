@@ -68,6 +68,8 @@ func TestCLITuplet(t *testing.T) {
 		`<normal-notes>2</normal-notes>`,
 		`<type>eighth</type>`,
 		`<duration>160</duration>`,
+		`<tuplet type="start"`,
+		`<tuplet type="stop"`,
 	}
 	for _, c := range checks {
 		if !strings.Contains(xml, c) {
@@ -173,6 +175,47 @@ func TestCLIKeySignature(t *testing.T) {
 
 	if !strings.Contains(xml, `<fifths>-3</fifths>`) {
 		t.Errorf("expected E-flat major key signature (fifths=-3)")
+	}
+}
+
+func TestCLIAccidentals(t *testing.T) {
+	out, err := exec.Command("./m4bon", "#c &b %c").Output()
+	if err != nil {
+		t.Fatalf("m4bon failed: %v", err)
+	}
+	xml := string(out)
+
+	checks := []string{
+		`<alter>1</alter>`,
+		`<accidental>sharp</accidental>`,
+		`<alter>-1</alter>`,
+		`<accidental>flat</accidental>`,
+	}
+	for _, c := range checks {
+		if !strings.Contains(xml, c) {
+			t.Errorf("expected output to contain %q", c)
+		}
+	}
+}
+
+func TestCLIDoubleAccidentals(t *testing.T) {
+	// Within one beat group
+	out, err := exec.Command("./m4bon", "##c&&e").Output()
+	if err != nil {
+		t.Fatalf("m4bon failed: %v", err)
+	}
+	xml := string(out)
+
+	checks := []string{
+		`<alter>2</alter>`,
+		`<accidental>double-sharp</accidental>`,
+		`<alter>-2</alter>`,
+		`<accidental>flat-flat</accidental>`,
+	}
+	for _, c := range checks {
+		if !strings.Contains(xml, c) {
+			t.Errorf("expected output to contain %q", c)
+		}
 	}
 }
 

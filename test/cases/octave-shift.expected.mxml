@@ -24,37 +24,19 @@
       </attributes>
       <note>
         <pitch>
-          <step>A</step>
-          <octave>3</octave>
-        </pitch>
-        <duration>960</duration>
-        <tie type="start"></tie>
-        <type>half</type>
-        <notations>
-          <tied type="start"></tied>
-        </notations>
-        <voice>1</voice>
-        <staff>1</staff>
-      </note>
-      <note>
-        <pitch>
-          <step>A</step>
-          <octave>3</octave>
+          <step>C</step>
+          <octave>4</octave>
         </pitch>
         <duration>240</duration>
-        <tie type="stop"></tie>
         <type>eighth</type>
         <beam number="1">begin</beam>
-        <notations>
-          <tied type="stop"></tied>
-        </notations>
         <voice>1</voice>
         <staff>1</staff>
       </note>
       <note>
         <pitch>
-          <step>B</step>
-          <octave>3</octave>
+          <step>C</step>
+          <octave>5</octave>
         </pitch>
         <duration>240</duration>
         <type>eighth</type>
@@ -65,10 +47,54 @@
       <note>
         <pitch>
           <step>C</step>
-          <octave>4</octave>
+          <octave>6</octave>
         </pitch>
         <duration>480</duration>
         <type>quarter</type>
+        <voice>1</voice>
+        <staff>1</staff>
+      </note>
+      <note>
+        <pitch>
+          <step>C</step>
+          <octave>6</octave>
+        </pitch>
+        <duration>240</duration>
+        <type>eighth</type>
+        <beam number="1">begin</beam>
+        <voice>1</voice>
+        <staff>1</staff>
+      </note>
+      <note>
+        <pitch>
+          <step>C</step>
+          <octave>5</octave>
+        </pitch>
+        <duration>240</duration>
+        <type>eighth</type>
+        <beam number="1">end</beam>
+        <voice>1</voice>
+        <staff>1</staff>
+      </note>
+      <note>
+        <pitch>
+          <step>C</step>
+          <octave>6</octave>
+        </pitch>
+        <duration>240</duration>
+        <type>eighth</type>
+        <beam number="1">begin</beam>
+        <voice>1</voice>
+        <staff>1</staff>
+      </note>
+      <note>
+        <pitch>
+          <step>C</step>
+          <octave>5</octave>
+        </pitch>
+        <duration>240</duration>
+        <type>eighth</type>
+        <beam number="1">end</beam>
         <voice>1</voice>
         <staff>1</staff>
       </note>

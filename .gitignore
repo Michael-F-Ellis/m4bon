@@ -62,3 +62,4 @@ compile_commands.json
 /m4bon
 *.test
 *.out
+.DS_Store

@@ -81,6 +81,67 @@ func TestParseChord(t *testing.T) {
 	}
 }
 
+func TestParseOctaveShift(t *testing.T) {
+	cases := []struct {
+		dsl      string
+		desc     string
+		expected []int // expected MIDI values
+	}{
+		{"c^c", "shift applies to next note", []int{60, 72}},
+		{"^c", "prefix shift", []int{72}},
+		{"c^^d^e", "multiple shifts across notes in beat", []int{60, 86, 100}},
+		{"c c", "no shift between notes", []int{60, 60}},
+		{"c/c", "down shift", []int{60, 48}},
+		{"^c/c", "up then down", []int{72, 60}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			r := ParseDSL(tc.dsl)
+			if r.Err != nil {
+				t.Fatalf("unexpected error: %v", r.Err)
+			}
+			// Collect note/chord events (skip tuplet markers)
+			var mids []int
+			for _, ev := range r.Events {
+				if ev.Type == EventNote || ev.Type == EventChord {
+					mids = append(mids, ev.Midi)
+				}
+			}
+			if len(mids) != len(tc.expected) {
+				t.Fatalf("expected %d notes, got %d (total events: %d)", len(tc.expected), len(mids), len(r.Events))
+			}
+			for i, m := range mids {
+				if m != tc.expected[i] {
+					t.Errorf("note %d: expected MIDI %d, got %d", i, tc.expected[i], m)
+				}
+			}
+		})
+	}
+}
+
+func TestParseAccidentalNatural(t *testing.T) {
+	// &&d&d%d#d##d = Dbb, Db, Dn, D#, D##
+	r := ParseDSL("&&d&d%d#d##d")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	expected := []int{-2, -1, 0, 1, 2}
+	var got []int
+	for _, ev := range r.Events {
+		if ev.Type == EventNote || ev.Type == EventChord {
+			got = append(got, ev.Accidental)
+		}
+	}
+	if len(got) != len(expected) {
+		t.Fatalf("expected %d notes, got %d", len(expected), len(got))
+	}
+	for i, e := range expected {
+		if got[i] != e {
+			t.Errorf("note %d: expected accidental %d, got %d", i, e, got[i])
+		}
+	}
+}
+
 func TestParseCompoundTime(t *testing.T) {
 	r := ParseDSL("M6/8 abc def")
 	if r.Err != nil {

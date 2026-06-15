@@ -68,10 +68,17 @@ type NoteEl struct {
 	Duration          int              `xml:"duration"`
 	Tie               []TieEl          `xml:"tie,omitempty"`
 	Type              string           `xml:"type"`
+	Accidental        string           `xml:"accidental,omitempty"`
 	TimeModification  *TimeMod         `xml:"time-modification,omitempty"`
+	Beams             []BeamEl         `xml:"beam,omitempty"`
 	Notations         *Notations       `xml:"notations,omitempty"`
 	Voice             int              `xml:"voice,omitempty"`
 	Staff             int              `xml:"staff,omitempty"`
+}
+
+type BeamEl struct {
+	Number int    `xml:"number,attr,omitempty"`
+	Value  string `xml:",chardata"`
 }
 
 type PitchEl struct {
@@ -90,8 +97,14 @@ type TiedEl struct {
 	Type string `xml:"type,attr"`
 }
 
+type TupletEl struct {
+	Type   string `xml:"type,attr"`
+	Number int    `xml:"number,attr"`
+}
+
 type Notations struct {
-	Tied []TiedEl `xml:"tied,omitempty"`
+	Tied   []TiedEl   `xml:"tied,omitempty"`
+	Tuplet []TupletEl `xml:"tuplet,omitempty"`
 }
 
 type TimeMod struct {
@@ -247,6 +260,21 @@ func totalDurationTicks(events []parser.Event) int {
 	return total
 }
 
+// accidentalString maps the parser's accidental value to a MusicXML accidental element value.
+func accidentalString(acc int) string {
+	switch acc {
+	case 1:
+		return "sharp"
+	case -1:
+		return "flat"
+	case 2:
+		return "double-sharp"
+	case -2:
+		return "flat-flat"
+	}
+	return ""
+}
+
 // Generate produces a MusicXML string from parsed events, time signature, and key signature.
 func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, error) {
 	beatTicks := DPPQ * 4 / timeDen * timeNum // ticks per beat * beats per measure
@@ -269,12 +297,25 @@ func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, 
 	}
 
 	var notes []NoteEl
-	var inTuplet bool
 	var tupletRatioNum, tupletRatioDen int
+	// isBeamable returns true for eighth-or-smaller note types that can be beamed.
+	isBeamable := func(nt string) bool {
+		switch nt {
+		case "eighth", "16th", "32nd", "64th", "128th":
+			return true
+		}
+		return false
+	}
+
+	// Track which pitch letters have had accidentals in this measure,
+	// so we know when to emit courtesy naturals.
+	type pitchState struct {
+		hasAccidental bool
+	}
+	pitchStates := make(map[string]*pitchState)
 
 	for i, ev := range events {
 		if ev.Type == parser.EventTupletStart {
-			inTuplet = true
 			tupletRatioNum = ev.Midi   // stored temporarily during parse
 			tupletRatioDen = ev.OctaveShift
 			continue
@@ -310,28 +351,62 @@ func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, 
 			notations = &Notations{Tied: tieds}
 		}
 
+		// Detect tuplet start/stop for visible tuplet bracket/number
+		if ev.Nominal != nil {
+			isFirst := i > 0 && events[i-1].Type == parser.EventTupletStart
+			isLast := i+1 >= len(events) || events[i+1].Nominal == nil
+			if isFirst || isLast {
+				if notations == nil {
+					notations = &Notations{}
+				}
+				tType := "start"
+				if isLast && !isFirst {
+					tType = "stop"
+				}
+				notations.Tuplet = []TupletEl{{Type: tType, Number: 1}}
+			}
+		}
+
 		switch ev.Type {
 		case parser.EventNote:
-			step, oct, alter := midiToStep(ev.Midi)
-			ne := NoteEl{
-				Pitch:     &PitchEl{Step: step, Octave: oct, Alter: alter},
-				Duration:  durTicks,
-				Type:      noteType,
-				Tie:       ties,
-				Notations: notations,
-				Voice:     1,
-				Staff:     1,
+			// Use the original letter and accidental directly from the event
+			// to preserve the correct enharmonic spelling (B♭ not A♯, etc.).
+			// Only derive octave from MIDI.
+			letter := strings.ToUpper(ev.Letter)
+			midiOct := ev.Midi / 12
+
+			// Determine accidental display
+			accidentalDisplay := accidentalString(ev.Accidental)
+			if accidentalDisplay == "" && ev.Accidental == 0 {
+				// Check if we need a courtesy natural (same pitch class had an accidental earlier)
+				if ps, ok := pitchStates[letter]; ok && ps.hasAccidental {
+					accidentalDisplay = "natural"
+				}
 			}
-			if inTuplet {
+			if ev.Accidental != 0 {
+				if pitchStates[letter] == nil {
+					pitchStates[letter] = &pitchState{}
+				}
+				pitchStates[letter].hasAccidental = true
+			}
+
+			ne := NoteEl{
+				Pitch:      &PitchEl{Step: letter, Octave: midiOct - 1, Alter: ev.Accidental},
+				Duration:   durTicks,
+				Type:       noteType,
+				Accidental: accidentalDisplay,
+				Tie:        ties,
+				Notations:  notations,
+				Voice:      1,
+				Staff:      1,
+			}
+			if ev.Nominal != nil {
 				ne.TimeModification = &TimeMod{
 					ActualNotes: fmt.Sprintf("%d", tupletRatioNum),
 					NormalNotes: fmt.Sprintf("%d", tupletRatioDen),
 				}
 			}
 			notes = append(notes, ne)
-			if !ev.Split {
-				inTuplet = false
-			}
 
 		case parser.EventRest:
 			ne := NoteEl{
@@ -342,7 +417,6 @@ func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, 
 				Staff:    1,
 			}
 			notes = append(notes, ne)
-			inTuplet = false
 
 		case parser.EventChord:
 			for pIdx, midi := range ev.Midis {
@@ -355,10 +429,65 @@ func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, 
 					Voice:    1,
 					Staff:    1,
 				}
+				if pIdx == 0 && ev.Nominal != nil {
+					ne.TimeModification = &TimeMod{
+						ActualNotes: fmt.Sprintf("%d", tupletRatioNum),
+						NormalNotes: fmt.Sprintf("%d", tupletRatioDen),
+					}
+				}
 				notes = append(notes, ne)
 			}
-			inTuplet = false
 		}
+	}
+
+	// Add beam elements for consecutive beamable notes within the same beat.
+	// Track cumulative tick position to detect beat boundaries.
+	tick := 0
+	for i := range notes {
+		nt := notes[i].Type
+		if !isBeamable(nt) || notes[i].Chord {
+			tick += notes[i].Duration
+			continue
+		}
+
+		// Calculate which beat (0-based) this note starts on
+		beatPos := (tick % beatTicks) / (DPPQ * 4 / timeDen)
+
+		// Check if next note's beat position differs from this one
+		var nextBeatSame bool
+		if i+1 < len(notes) {
+			nextNT := notes[i+1].Type
+			if isBeamable(nextNT) && !notes[i+1].Chord {
+				nextTick := tick + notes[i].Duration
+				nextBeatPos := (nextTick % beatTicks) / (DPPQ * 4 / timeDen)
+				nextBeatSame = nextBeatPos == beatPos
+			}
+		}
+
+		// Check if previous note's beat position differs from this one
+		var prevBeatSame bool
+		if i > 0 {
+			prevNT := notes[i-1].Type
+			if isBeamable(prevNT) && !notes[i-1].Chord {
+				prevStart := tick - notes[i].Duration
+				prevBeatPos := (prevStart % beatTicks) / (DPPQ * 4 / timeDen)
+				prevBeatSame = prevBeatPos == beatPos
+			}
+		}
+
+		var beam string
+		if !prevBeatSame && nextBeatSame {
+			beam = "begin"
+		} else if prevBeatSame && nextBeatSame {
+			beam = "continue"
+		} else if prevBeatSame && !nextBeatSame {
+			beam = "end"
+		}
+		if beam != "" {
+			notes[i].Beams = []BeamEl{{Number: 1, Value: beam}}
+		}
+
+		tick += notes[i].Duration
 	}
 
 	// Place notes in measures
@@ -405,11 +534,17 @@ func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, 
 }
 
 // SanitizeDSL strips comments and trims whitespace from DSL text.
+// A comment is a line whose first non-whitespace character is '#' followed
+// by whitespace (or just '#' alone). Bare '#c' is NOT treated as a comment.
 func SanitizeDSL(text string) string {
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		if trimmed == "" {
+			continue
+		}
+		// Check if line is a comment: "#" or "# text" (not "#c", "#&b", etc.)
+		if strings.HasPrefix(trimmed, "#") && (len(trimmed) == 1 || trimmed[1] == ' ') {
 			continue
 		}
 		lines = append(lines, trimmed)

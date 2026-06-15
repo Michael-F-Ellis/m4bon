@@ -171,7 +171,9 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 	var slots []Slot
 	i := 0
 	acc := 0
+	pendingAcc := 0
 	oct := 0
+	pendingOct := 0
 	hasLetter := false
 	letter := ""
 	inChord := false
@@ -187,16 +189,18 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 				r := err("accidental/octave without pitch in chord", offset)
 				return &r
 			}
-			chordPitches = append(chordPitches, Pitch{Letter: letter, Accidental: acc, OctaveShift: oct})
+			chordPitches = append(chordPitches, Pitch{Letter: letter, Accidental: acc + pendingAcc, OctaveShift: oct + pendingOct})
 		} else {
 			if !hasLetter {
 				r := err("accidental/octave without pitch at end of group", offset)
 				return &r
 			}
-			slots = append(slots, Slot{Type: SlotNote, Letter: letter, Accidental: acc, OctaveShift: oct})
+			slots = append(slots, Slot{Type: SlotNote, Letter: letter, Accidental: acc + pendingAcc, OctaveShift: oct + pendingOct})
 		}
 		acc = 0
+		pendingAcc = 0
 		oct = 0
+		pendingOct = 0
 		hasLetter = false
 		letter = ""
 		return nil
@@ -224,23 +228,44 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 
 		switch ch {
 		case '#':
-			acc++
+			if hasLetter {
+				pendingAcc++
+			} else {
+				acc++
+			}
 			i++
 			continue
 		case '&':
-			acc--
+			if hasLetter {
+				pendingAcc--
+			} else {
+				acc--
+			}
 			i++
 			continue
 		case '%':
-			acc = 0
+			if hasLetter {
+				// Natural: next note gets no accidental; current note is unaffected
+				pendingAcc = 0
+			} else {
+				acc = 0
+			}
 			i++
 			continue
 		case '^':
-			oct++
+			if hasLetter {
+				pendingOct++
+			} else {
+				oct++
+			}
 			i++
 			continue
 		case '/':
-			oct--
+			if hasLetter {
+				pendingOct--
+			} else {
+				oct--
+			}
 			i++
 			continue
 		case '-':
@@ -305,9 +330,17 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 		lower := strings.ToLower(string(ch))
 		if lower >= "a" && lower <= "g" {
 			if hasLetter {
+				// Accidentals and octave shifts between notes apply to the next note, not the current one.
+				// Save pending values for the new note, emit without them, then transfer.
+				nextAcc := pendingAcc
+				nextOct := pendingOct
+				pendingAcc = 0
+				pendingOct = 0
 				if r := emitNote(i); r != nil {
 					return *r
 				}
+				acc = nextAcc
+				oct = nextOct
 			}
 			letter = lower
 			hasLetter = true
