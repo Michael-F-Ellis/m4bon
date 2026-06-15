@@ -1,0 +1,131 @@
+Usage: /Applications/MuseScore 4.app/Contents/MacOS/mscore [options] [scorefile...]
+
+Options:
+  -h, --help                              Displays help on commandline options.
+  --help-all                              Displays help, including generic Qt
+                                          options.
+  -v, --version                           Displays version information.
+  --long-version                          Print detailed version information
+  -d, --debug                             Debug mode
+  -D, --monitor-resolution <DPI>          Specify monitor resolution
+  -T, --trim-image <margin>               Use with '-o <file>.png' and '-o
+                                          <file.svg>'. Trim exported image with
+                                          specified margin (in pixels)
+  -b, --bitrate <bitrate>                 Use with '-o <file>.mp3', sets
+                                          bitrate, in kbps
+  --template-mode                         Save template mode, no page size
+  -t, --test-mode                         Set test mode flag for all files
+  --session-type <type>                   Startup with given session type
+  --unroll-repeats                        Unroll repeats
+  -r, --image-resolution <DPI>            Set output resolution for image
+                                          export
+  -o, --export-to <file>                  Export to 'file'. Format depends on
+                                          file's extension
+  -j, --job <file>                        Process a conversion job
+  --extension <uri>                       Use extension to process a conversion
+                                          job
+  -F, --factory-settings                  Use factory settings
+  -R, --revert-settings                   Revert to factory settings, but keep
+                                          default preferences
+  -M, --midi-operations <file>            Specify MIDI import operations file
+  -P, --export-score-parts                Use with '-o <file>.pdf', export
+                                          score and parts
+  -f, --force                             Use with '-o <file>', ignore warnings
+                                          reg. score being corrupted or from
+                                          wrong version
+  --score-media                           Export all media (excepting mp3) for
+                                          a given score in a single JSON file
+                                          and print it to stdout
+  --highlight-config <highlight-config>   Set highlight to svg, generated from
+                                          a given score
+  --score-meta                            Export score metadata to JSON
+                                          document and print it to stdout
+  --score-parts                           Generate parts data for the given
+                                          score and save them to separate mscz
+                                          files
+  --score-parts-pdf                       Generate parts data for the given
+                                          score and export the data to a single
+                                          JSON file, print it to stdout
+  --score-transpose <options>             Transpose the given score and export
+                                          the data to a single JSON file, print
+                                          it to stdout
+  --score-elements                        Scan the given score and export
+                                          elements to a single JSON file, print
+                                          it to stdout
+  --source-update                         Update the source in the given score
+  -S, --style <style>                     Load style file
+  --sound-profile <sound-profile>         Use with '-o <file>.mp3' or with '-j
+                                          <file>', override the sound profile in
+                                          the given score(s). Possible values:
+                                          "MuseScore Basic", "MuseSounds"
+  --tracks-diff <tracks-diff>             Use with -o <file>.mp3, write a diff
+                                          of tracks before and after applying
+                                          the sound profile. The report contains
+                                          two lists: oldTracks and newTracks
+  --transpose <options>                   Transpose the given score before
+                                          executing the '-o' options
+  --page <options>                        Use with '-o <file>', export only the
+                                          specified page. Supported output
+                                          formats: SVG, PNG, PDF, MSCZ
+  --region <options>                      Use with '-o <file>', export only the
+                                          specified region to a separate mscz
+                                          file. 
+  --musicxml-use-default-font             Apply default typeface (Edwin) to
+                                          imported scores
+  --musicxml-infer-text-type              Infer text type based on content
+                                          where possible
+  --score-video                           Generate video for the given score
+                                          and export it to file
+  --resolution <1080p>                    Resolution [2160p, 1440p, 1080p,
+                                          720p, 480p, 360p]
+  --fps <24>                              Frame per second [60, 30, 24]
+  --ls <3.0>                              Pause before playback in seconds
+                                          (3.0)
+  --ts <3.0>                              Pause before end of video in seconds
+                                          (3.0)
+  --no-audio                              Export video without audio
+  --gp-linked                             create tabulature linked staves for
+                                          guitar pro
+  --gp-experimental                       experimental features for guitar pro
+                                          import
+  --migration <mode>                      Whether to do migration with given
+                                          mode, `full` - full migration
+  --diagnostic-output <output>            Diagnostic output
+  --diagnostic-gen-drawdata <scores-dir>  Generate engraving draw data
+  --diagnostic-com-drawdata               Compare engraving draw data
+  --diagnostic-drawdata-to-png <file>     Convert draw data to png
+  --diagnostic-drawdiff-to-png            Convert draw diff to png
+  --test-case <nameOrFile>                Run test case by name or file
+  --test-case-context <nameOrFile>        Set test case context by name or file
+  --test-case-context-value <value>       Set test case context value
+  --test-case-func <name>                 Call test case function
+  --test-case-func-args <args>            Call test case function args
+  --register-audio-plugin <path>          Check an audio plugin for
+                                          compatibility with the application and
+                                          register it
+  --register-failed-audio-plugin <path>   Register an incompatible audio plugin
+  --qmljsdebugger <value>                 Activates the QML/JS debugger with a
+                                          specified port. The value must be of
+                                          format port:1234[,block]. "block"
+                                          makes the application wait for a
+                                          connection.
+  --platform <platformName[:options]>     QPA plugin. See QGuiApplication
+                                          documentation for available options
+                                          for each plugin.
+  --platformpluginpath <path>             Path to the platform plugins.
+  --platformtheme <theme>                 Platform theme.
+  --plugin <plugin>                       Additional plugins to load, can be
+                                          specified multiple times.
+  --qwindowgeometry <geometry>            Window geometry for the main window,
+                                          using the X11-syntax, like
+                                          100x100+50+50.
+  --qwindowicon <icon>                    Default window icon.
+  --qwindowtitle <title>                  Title of the first window.
+  --reverse                               Sets the application's layout
+                                          direction to Qt::RightToLeft
+                                          (debugging helper).
+  --session <session>                     Restores the application from an
+                                          earlier session.
+
+Arguments:
+  scorefiles                              The files to open

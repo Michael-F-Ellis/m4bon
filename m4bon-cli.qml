@@ -1,33 +1,28 @@
 import MuseScore 3.0
 import QtQuick 2.9
-import QtQuick.Controls 2.2
-import QtQuick.Layouts 1.3
 
 /**
- * m4bon — Beat-Oriented Note Entry for MuseScore 4
+ * m4bon-cli — Non-interactive variant of m4bon for CLI/scripting use.
  *
- * A DSL-driven plugin where users type beat-oriented rhythmic patterns
- * and press Send to insert notes at the current cursor position.
+ * Reads DSL from /tmp/m4bon-dsl.txt on startup, inserts notes at the
+ * current cursor position, and exits immediately.  No dialog, no UI.
  *
- * DSL philosophy: whitespace separates beats. Characters grouped without
- * spaces subdivide that beat equally.  See AGENTS.md for full spec.
+ * Invoke via the MuseScore Plugins menu after enabling, or use job.json:
+ *
+ *   mscore -j job.json
+ *   where job.json = [{"in":"score.mscz","plugin":"m4bon-cli","out":"result.mscz"}]
  */
 MuseScore {
     id: plugin
-    title: "m4bon"
-    description: "Beat-oriented note entry for MuseScore 4"
+    title: "m4bon-cli"
+    description: "Non-interactive m4bon for CLI scripting"
     version: "0.6.0"
     categoryCode: "composing-arranging-tools"
-    thumbnailName: ""
 
-    pluginType: "dialog"
-    width: 500
-    height: 340
+    // Allow overriding the DSL path (default: /tmp/m4bon-dsl.txt)
+    property string dslFilePath: ""
 
-    // ----------------------------------------------------------------
-    // DSL symbol constants
-    // Override these to fork the plugin with a different character set.
-    // ----------------------------------------------------------------
+    // ---- Symbol constants (keep in sync with m4bon.qml) ----
     property string symSharp         : "#"
     property string symFlat          : "&"
     property string symNatural       : "%"
@@ -39,34 +34,15 @@ MuseScore {
     property string symChordClose    : ")"
     property string symBarline       : "|"
 
-    // Path to DSL file for non-interactive CLI scripting mode.
-    // Leave empty to fall back to the default path /tmp/m4bon-dsl.txt
-    property string dslFilePath: ""
-    property bool autoInsertMode: false  // set by onRun when DSL loaded from file
+    // ---- Helpers ----
 
-    // Built-in test cases (loaded via the Load button — no file I/O needed)
-    property var testCases: ({
-        "basic-notes": "c d e f",
-        "sustain-chain": "a - -b c",
-        "tuplet-triplet": "abc",
-        "chord-group": "(ace)f",
-        "compound-6-8": "abc def",
-    })
+    function log(msg) { console.log("[m4bon-cli] " + msg); }
 
-    // Logging helpers
-    function log(msg) { console.log("[m4bon] " + msg); }
-
-    // Read a local file via XMLHttpRequest (used for CLI scripting mode
-    // and loading test cases). Accepts file:// URLs or plain paths.
-    // Returns trimmed content or empty string on failure.
     function readLocalFile(filePath) {
         try {
-            // If already a file:// URL, use as-is; otherwise prepend
-            var url = filePath.indexOf("file://") === 0 ? filePath : "file://" + filePath;
             var xhr = new XMLHttpRequest();
-            xhr.open("GET", url, false);
+            xhr.open("GET", "file://" + filePath, false);
             xhr.send(null);
-            log("readLocalFile: status=" + xhr.status + " for " + url);
             if (xhr.status === 0 || xhr.status === 200)
                 return xhr.responseText.trim();
         } catch (e) {
@@ -82,7 +58,6 @@ MuseScore {
     })
 
     function normalizePitchInput(text) {
-        // Convert to lowercase, map FQS/MS4 accidental chars to our symbols
         var t = text.toLowerCase();
         t = t.replace(/[♯]/g, symSharp);
         t = t.replace(/[♭]/g, symFlat);
@@ -96,70 +71,38 @@ MuseScore {
         return 60 + (octave - 4) * 12 + base + accidental;
     }
 
-    // ---- DSL parser ----
+    // ---- DSL parser (mirrors m4bon.qml exactly) ----
 
-    /**
-     * Read time signature from the score cursor and return beat duration
-     * as a fraction of a whole note. Falls back to 4/4.
-     *
-     * Returns: {num: int, den: int} representing beat duration.
-     *   e.g. quarter beat in 4/4 → {num: 1, den: 4}
-     *        dotted quarter in 6/8 → {num: 3, den: 8}
-     *        eighth in 5/8 → {num: 1, den: 8}
-     */
     function resolveBeatDuration(cursor) {
-        // Try to read time signature from current measure
-        var num = 4, den = 4;  // default
+        var num = 4, den = 4;
         try {
             if (cursor && cursor.measure) {
-                // MuseScore 4 API: measure has timesigNumerator/Denominator
                 num = cursor.measure.timesigNumerator || 4;
                 den = cursor.measure.timesigDenominator || 4;
             } else if (typeof curScore !== "undefined" && curScore) {
-                // Fallback: some versions expose it on the score
                 num = curScore.timesigNumerator || 4;
                 den = curScore.timesigDenominator || 4;
             }
         } catch (e) {
             log("Could not read time signature, defaulting to 4/4");
         }
-
-        // Determine beat unit in whole-note fractions
         var z, n;
         if (den === 2) {
-            // X/2: beat = half note
             z = 1; n = 2;
         } else if (den === 4) {
-            // X/4: beat = quarter note
             z = 1; n = 4;
         } else if (den === 8) {
-            if (num % 3 === 0) {
-                // Compound: 6/8, 9/8, 12/8 → beat = dotted quarter = 3/8
-                z = 3; n = 8;
-            } else {
-                // Non-compound: 5/8, 7/8 → beat = eighth
-                z = 1; n = 8;
-            }
+            if (num % 3 === 0) { z = 3; n = 8; }
+            else { z = 1; n = 8; }
         } else if (den === 16) {
-            if (num % 3 === 0) {
-                // Compound: 6/16, 9/16 → beat = dotted eighth = 3/16
-                z = 3; n = 16;
-            } else {
-                z = 1; n = 16;
-            }
+            if (num % 3 === 0) { z = 3; n = 16; }
+            else { z = 1; n = 16; }
         } else {
             z = 1; n = den;
         }
-
         return {num: z, den: n};
     }
 
-    /**
-     * Tokenize DSL input: split by whitespace, track offsets for errors.
-     * Also handles normalizePitchInput (lowercase + UTF-8 accidentals).
-     *
-     * Returns: [{raw: string, offset: int}, ...]
-     */
     function tokenize(text) {
         var normalized = normalizePitchInput(text);
         var tokens = [];
@@ -171,31 +114,14 @@ MuseScore {
         return tokens;
     }
 
-    /**
-     * Parse a single beat group token into multiplier + slot list.
-     *
-     * States: IDLE | IN_MULTIPLIER | IN_CHORD | EXPECT_LETTER
-     *
-     * Returns: {multiplier: int, slots: Slot[], error: string|null, errorOffset: int}
-     *
-     * Slot types:
-     *   {type: "note",   letter, accidental, octaveShift}
-     *   {type: "sustain"}
-     *   {type: "rest"}
-     *   {type: "chord",  pitches: [{letter, accidental, octaveShift}, ...]}
-     */
     function parseGroup(raw, priorPitchExists) {
         var multiplier = 1;
         var slots = [];
         var i = 0;
-
-        // Accumulators reset per note/chord
         var acc = 0;
         var oct = 0;
         var hasLetter = false;
         var letter = "";
-
-        // Chord accumulator
         var inChord = false;
         var chordPitches = [];
 
@@ -219,7 +145,6 @@ MuseScore {
             var ch = raw[i];
             var errResult = null;
 
-            // --- MULTIPLIER (digits only valid at start) ---
             if (!inChord && i === 0 && ch >= '1' && ch <= '9') {
                 var multStart = i;
                 multiplier = 0;
@@ -232,20 +157,15 @@ MuseScore {
                 continue;
             }
 
-            // --- DIGIT detected beyond start ---
             if (ch >= '0' && ch <= '9')
                 return err("unexpected digit — multiplier must be at start", i);
 
-            // --- ACCIDENTALS ---
             if (ch === '#')      { acc += 1; i++; continue; }
             if (ch === '&')      { acc -= 1; i++; continue; }
             if (ch === '%')      { acc = 0;  i++; continue; }
-
-            // --- OCTAVE SHIFTS ---
             if (ch === '^')      { oct += 1; i++; continue; }
             if (ch === '/')      { oct -= 1; i++; continue; }
 
-            // --- SUSTAIN ---
             if (ch === '-') {
                 if (hasLetter) {
                     errResult = emitNote(i);
@@ -257,7 +177,6 @@ MuseScore {
                 i++; continue;
             }
 
-            // --- REST ---
             if (ch === ';') {
                 if (hasLetter) {
                     errResult = emitNote(i);
@@ -267,7 +186,6 @@ MuseScore {
                 i++; continue;
             }
 
-            // --- CHORD OPEN ---
             if (ch === '(') {
                 if (inChord) return err("nested chords not allowed", i);
                 if (hasLetter) {
@@ -279,7 +197,6 @@ MuseScore {
                 i++; continue;
             }
 
-            // --- CHORD CLOSE ---
             if (ch === ')') {
                 if (!inChord) return err("unmatched closing parenthesis", i);
                 if (hasLetter) {
@@ -288,7 +205,6 @@ MuseScore {
                 }
                 if (chordPitches.length === 0)
                     return err("empty chord", i);
-                // Validate ascending order
                 for (var p = 1; p < chordPitches.length; p++) {
                     if (chordPitches[p].letter <= chordPitches[p-1].letter)
                         return err("chord pitches must be strictly ascending", i);
@@ -299,16 +215,10 @@ MuseScore {
                 i++; continue;
             }
 
-            // --- PITCH LETTER ---
             var lower = ch.toLowerCase();
             if (lower >= 'a' && lower <= 'g') {
                 if (hasLetter) {
-                    // Two letters in a row outside a chord = two separate slots
-                    if (inChord) {
-                        errResult = emitNote(i);
-                    } else {
-                        errResult = emitNote(i);
-                    }
+                    errResult = emitNote(i);
                     if (errResult) return errResult;
                 }
                 letter = lower;
@@ -316,11 +226,9 @@ MuseScore {
                 i++; continue;
             }
 
-            // --- UNKNOWN CHARACTER ---
             return err("unexpected character '" + ch + "'", i);
         }
 
-        // End of string — flush any pending state
         if (inChord) return err("unclosed chord", raw.length);
         if (hasLetter) {
             var flushErr = emitNote(i);
@@ -343,11 +251,6 @@ MuseScore {
         return p;
     }
 
-    /**
-     * A duration fraction is "standard" if it corresponds to a normal
-     * note value (1/den) or a dotted note (3/den), where den is a power of 2.
-     * Non-standard durations (e.g. 1/12, 1/24, 1/6) indicate tuplets.
-     */
     function isStandardDuration(z, n) {
         var g = gcd(z, n);
         z /= g;
@@ -364,15 +267,6 @@ MuseScore {
         return n;
     }
 
-    /**
-     * Given parsed groups and time signature, compute event durations
-     * and flatten sustain slots into extended note lengths.
-     *
-     * Tuplet groups emit a tupletStart event followed by notes with
-     * NOMINAL durations. Non-tuplet groups emit ACTUAL durations.
-     *
-     * Returns: [{type: ...}, ...] or {error: string}
-     */
     function resolveDurations(groups, timeSig) {
         var beat = resolveBeatDuration(timeSig);
         var events = [];
@@ -386,7 +280,6 @@ MuseScore {
 
             var activeCount = countActivePositions(group.slots);
 
-            // Sustain-only group: standalone "-" extends prior event by full group duration
             if (activeCount === 0 && group.slots.length > 0) {
                 if (events.length === 0)
                     return {error: "sustain with no prior note"};
@@ -410,16 +303,12 @@ MuseScore {
 
             if (activeCount === 0) continue;
 
-            // Total group time = multiplier × beat
             var totalNum = group.multiplier * beat.num;
             var totalDen = beat.den;
 
-            // Per-position (raw fraction, before sustain merging)
             var posNum = totalNum;
             var posDen = totalDen * posCount;
 
-            // Does this group need a tuplet?  Check if the per-note
-            // actual duration is a standard note value.
             var perNoteNum = totalNum;
             var perNoteDen = totalDen * activeCount;
             var needsTuplet = !isStandardDuration(perNoteNum, perNoteDen);
@@ -427,7 +316,6 @@ MuseScore {
             if (needsTuplet) {
                 var ratioNum = activeCount;
                 var ratioDen = lowerPowerOf2(activeCount);
-                // Nominal base = total_time / ratio_denominator
                 var nomNum = totalNum;
                 var nomDen = totalDen * ratioDen;
                 var ng = gcd(nomNum, nomDen);
@@ -449,7 +337,6 @@ MuseScore {
                 if (slot.type === "sustain") {
                     if (events.length === 0)
                         return {error: "sustain with no prior note across groups"};
-                    // Extend last event's duration by one position
                     var last = events[events.length - 1];
                     last.duration.num = last.duration.num * posDen + posNum * last.duration.den;
                     last.duration.den = last.duration.den * posDen;
@@ -486,14 +373,6 @@ MuseScore {
         return splitNonStandardDurations(events);
     }
 
-    /**
-     * Split non-standard durations (e.g. 5/8) into standard note values
-     * that sum to the same total (e.g. 1/2 + 1/8).  This ensures every
-     * setDuration(z,n) call uses a note value MuseScore can render.
-     *
-     * Events that come from a split are deep-copies of the original,
-     * producing tied notes of the same pitch in the output.
-     */
     function splitNonStandardDurations(events) {
         var result = [];
         for (var i = 0; i < events.length; i++) {
@@ -507,7 +386,6 @@ MuseScore {
                 result.push(ev);
                 continue;
             }
-            // Greedy split: subtract largest standard note values first
             var remains = dur.num / dur.den;
             var standards = [
                 {num:1, den:2}, {num:1, den:4}, {num:1, den:8},
@@ -524,7 +402,7 @@ MuseScore {
                         ne.duration = {num: standards[si].num, den: standards[si].den};
                         if (ev.nominal)
                             ne.nominal = {num: standards[si].num, den: standards[si].den};
-                        ne._split = first ? undefined : true; // mark continuation
+                        ne._split = first ? undefined : true;
                         result.push(ne);
                         remains -= sv;
                         first = false;
@@ -536,9 +414,6 @@ MuseScore {
         return result;
     }
 
-    /**
-     * Compute GCD for fraction reduction.
-     */
     function gcd(a, b) {
         a = Math.abs(a);
         b = Math.abs(b);
@@ -550,19 +425,11 @@ MuseScore {
         return a;
     }
 
-    /**
-     * Resolve relative octaves for all notes/chords using Lilypond
-     * "closest interval" rule. Initial reference = C4 (MIDI 60).
-     *
-     * Mutates events in-place, adding a 'midi' or 'midis' field.
-     */
     function resolveOctaves(events) {
-        var lastPitch = 60; // C4
-
+        var lastPitch = 60;
         for (var i = 0; i < events.length; i++) {
             var ev = events[i];
             if (ev.type === "tupletStart" || ev.type === "rest") continue;
-
             if (ev.type === "note") {
                 ev.midi = resolvePitch(ev.letter, ev.accidental, ev.octaveShift, lastPitch);
                 lastPitch = ev.midi;
@@ -573,68 +440,47 @@ MuseScore {
                     var pi = ev.pitches[p];
                     var m = resolvePitch(pi.letter, pi.accidental, pi.octaveShift, chordRef);
                     midis.push(m);
-                    chordRef = m; // ascending within chord
+                    chordRef = m;
                 }
                 ev.midis = midis;
-                lastPitch = midis[midis.length - 1]; // chord's last pitch sets ref for next event
+                lastPitch = midis[midis.length - 1];
             }
         }
     }
 
-    /**
-     * Resolve a single pitch to MIDI number.
-     * Uses Lilypond closest-interval rule from reference.
-     * 'octaveShift' forces up/down by that many octaves before the
-     * relative rule is applied.
-     */
     function resolvePitch(letter, accidental, octaveShift, reference) {
         var base = noteOffsets[letter];
         var refOctave = Math.floor(reference / 12);
         var refNote = reference % 12;
-
-        // Compute raw semitone in C4-based absolute octave
         var raw = base + accidental;
-        // Find which octave puts it closest to reference
         var bestOctave = refOctave;
         var bestDiff = 999;
         for (var oct = refOctave - 2; oct <= refOctave + 2; oct++) {
             var candidate = oct * 12 + raw;
             var diff = Math.abs(candidate - reference);
-            if (diff < bestDiff) {
-                bestDiff = diff;
-                bestOctave = oct;
-            }
+            if (diff < bestDiff) { bestDiff = diff; bestOctave = oct; }
         }
-        // Apply forced octave shift
         bestOctave += octaveShift;
         var midi = bestOctave * 12 + raw;
-        // Clamp to MIDI range
         if (midi < 0) midi = 0;
         if (midi > 127) midi = 127;
         return midi;
     }
 
-    /**
-     * Full parse pipeline: normalize → tokenize → parseGroups → resolveDurations → resolveOctaves.
-     *
-     * Returns: {events: [...], error: string|null}
-     */
+    // ---- Full pipeline ----
+
     function parseDSL(text) {
-        // Pass 1: tokenize
         var tokens = tokenize(text);
         if (tokens.length === 0)
             return {events: [], error: "No input"};
 
-        // Pass 2-3: parse each group, skipping barline tokens
         var priorPitch = false;
         var groups = [];
         for (var t = 0; t < tokens.length; t++) {
-            // Barline is syntactic sugar — skip it
             if (tokens[t].raw === symBarline) continue;
             var result = parseGroup(tokens[t].raw, priorPitch);
             if (result.error)
                 return {events: [], error: "Group '" + tokens[t].raw + "': " + result.error};
-            // Check if this group ends with a pitch (for cross-group sustain detection)
             for (var s = result.slots.length - 1; s >= 0; s--) {
                 if (result.slots[s].type === "note" || result.slots[s].type === "chord") {
                     priorPitch = true;
@@ -648,9 +494,6 @@ MuseScore {
             groups.push(result);
         }
 
-        // Pass 4: resolve durations
-        // Need cursor to read time signature. Use a temporary cursor if possible,
-        // otherwise default to 4/4.
         var timeSigCursor = null;
         try {
             if (typeof curScore !== "undefined" && curScore) {
@@ -663,16 +506,11 @@ MuseScore {
         if (events.error)
             return {events: [], error: events.error};
 
-        // Pass 5: resolve octaves
         resolveOctaves(events);
-
         return {events: events, error: null};
     }
 
     // ---- Score insertion ----
-
-    property var lastInserted: []    // tracks last inserted events for undo info
-    property int lastNoteCount: 0
 
     function insertNotes(events) {
         if (typeof curScore === "undefined" || !curScore) {
@@ -680,14 +518,8 @@ MuseScore {
         }
 
         var cursor = curScore.newCursor();
-        cursor.track = 0;  // Staff 0, voice 0
-        // In non-interactive mode (DSL loaded from file), always start at
-        // the beginning of the score. In interactive mode, use the current
-        // cursor/selection position.
-        if (autoInsertMode)
-            cursor.rewind(0);
-        else
-            cursor.rewind(1);  // current cursor position (or selection start)
+        cursor.track = 0;
+        cursor.rewind(0);  // Start of score — no selection needed
 
         curScore.startCmd();
 
@@ -695,7 +527,6 @@ MuseScore {
         for (var i = 0; i < events.length; i++) {
             var ev = events[i];
 
-            // Tuplet container start
             if (ev.type === "tupletStart") {
                 cursor.addTuplet(
                     fraction(ev.ratioNum, ev.ratioDen),
@@ -704,7 +535,6 @@ MuseScore {
                 continue;
             }
 
-            // Use nominal duration for tuplet notes, actual duration otherwise
             var dur = ev.nominal || ev.duration;
             var z = dur.num;
             var n = dur.den;
@@ -731,226 +561,53 @@ MuseScore {
         }
 
         curScore.endCmd();
-
-        lastInserted = events;
-        lastNoteCount = count;
-
         return { ok: true, msg: "Inserted " + count + " note(s)" };
     }
 
-    // ---- UI actions ----
+    // ---- Entry point ----
 
-    function handleSend() {
-        var text = inputField.text.trim();
-        if (text.length === 0) {
-            statusLabel.text = "Enter DSL input first";
+    onRun: {
+        log("CLI plugin started");
+
+        if (typeof curScore === "undefined" || !curScore) {
+            log("No score open, aborting");
+            Qt.quit();
             return;
         }
 
-        var result = parseDSL(text);
+        var path = dslFilePath.length > 0 ? dslFilePath : "/tmp/m4bon-dsl.txt";
+        var dsl = readLocalFile(path);
+        if (dsl.length === 0) {
+            log("No DSL input found at " + path + ", aborting");
+            Qt.quit();
+            return;
+        }
+
+        log("Read DSL: " + dsl);
+
+        var result = parseDSL(dsl);
         if (result.error) {
-            statusLabel.color = "#c00";
-            statusLabel.text = result.error;
+            log("Parse error: " + result.error);
+            Qt.quit();
             return;
         }
 
         if (result.events.length === 0) {
-            statusLabel.text = "No notes to insert";
+            log("No events to insert");
+            Qt.quit();
             return;
         }
+
+        log("Parsed " + result.events.length + " events");
 
         var insResult = insertNotes(result.events);
-        if (insResult.ok) {
-            statusLabel.color = "#1a7a1a";
-        } else {
-            statusLabel.color = "#c00";
-        }
-        statusLabel.text = insResult.msg;
-    }
+        log(insResult.msg);
 
-    function handleUndo() {
-        if (lastNoteCount === 0) {
-            statusLabel.text = "Nothing to undo";
-            return;
-        }
-        try {
-            curScore.undo();
-            statusLabel.text = "Undo attempted — verify in score";
-        } catch (e) {
-            statusLabel.text = "Close plugin and press Ctrl+Z (Cmd+Z) to undo";
-        }
-        statusLabel.color = "#888";
-    }
-
-    // ---- Window ----
-
-    onRun: {
-        log("Plugin started");
-        if (typeof curScore === "undefined" || !curScore) {
-            log("No score open, will show error on Send");
-        }
-        // Non-interactive mode: read DSL from file and run immediately
-        var dslPath = dslFilePath.length > 0 ? dslFilePath : "/tmp/m4bon-dsl.txt";
-        var dsl = readLocalFile("file://" + dslPath);
-        if (dsl.length > 0) {
-            autoInsertMode = true;
-            inputField.text = dsl;
-            handleSend();
-            log("Non-interactive mode complete");
-            return;
-        }
-        statusLabel.text = "Type DSL and press Send";
-        statusLabel.color = "#888";
-        inputField.forceActiveFocus();
-    }
-
-    Keys.onPressed: {
-        if (event.key === Qt.Key_Escape) {
-            Qt.quit();
-        }
-        // Ctrl+Enter / Cmd+Enter to send
-        if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) &&
-            (event.modifiers & Qt.ControlModifier || event.modifiers & Qt.MetaModifier)) {
-            handleSend();
-            event.accepted = true;
-        }
-    }
-
-    // ---- UI Layout ----
-
-    ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 14
-        spacing: 8
-
-        Label {
-            text: "m4bon — Beat-Oriented Note Entry"
-            font.pixelSize: 15
-            font.bold: true
-            color: "#333"
+        if (!insResult.ok) {
+            log("Insert failed: " + insResult.msg);
         }
 
-        Label {
-            text: "Enter beat groups (whitespace = beat separator):"
-            font.pixelSize: 12
-            color: "#666"
-        }
-
-        // DSL input field
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 120
-            color: "#fafafa"
-            border.color: "#ccc"
-            border.width: 1
-            radius: 4
-
-            TextEdit {
-                id: inputField
-                anchors.fill: parent
-                anchors.margins: 8
-                font.family: "Menlo, Consolas, monospace"
-                font.pixelSize: 14
-                wrapMode: TextEdit.Wrap
-                selectByMouse: true
-                persistentSelection: true
-                color: "#222"
-
-                Text {
-                    anchors.fill: parent
-                    text: "a b | ab | a--b | (ace)f | 2abc"
-                    color: "#bbb"
-                    font: parent.font
-                    visible: !parent.text.length && !parent.activeFocus
-                    clip: true
-                }
-            }
-        }
-
-        // Example label
-        Label {
-            text: "Try: a b | ab | a--b | (ace)f | 2abc | a -; | for 5/8: 3abc 2ab"
-            font.pixelSize: 10
-            color: "#999"
-            wrapMode: Label.Wrap
-            Layout.fillWidth: true
-        }
-
-        // Test case loader row
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 6
-
-            ComboBox {
-                id: testSelector
-                Layout.fillWidth: true
-                model: Object.keys(testCases)
-                font.pixelSize: 12
-            }
-
-            Button {
-                id: loadTestBtn
-                text: "Load"
-                Layout.preferredWidth: 60
-                Layout.preferredHeight: 26
-                font.pixelSize: 11
-                onClicked: {
-                    var name = testSelector.currentText;
-                    var dsl = testCases[name] || "";
-                    if (dsl.length > 0) {
-                        inputField.text = dsl;
-                        statusLabel.color = "#888";
-                        statusLabel.text = "Loaded: " + name;
-                    } else {
-                        statusLabel.color = "#c00";
-                        statusLabel.text = "No test: " + name;
-                    }
-                }
-            }
-        }
-
-        // Button row
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 10
-
-            Button {
-                id: sendBtn
-                text: "Send"
-                Layout.preferredWidth: 90
-                Layout.preferredHeight: 30
-                onClicked: handleSend()
-            }
-
-            Button {
-                id: undoBtn
-                text: "Undo"
-                Layout.preferredWidth: 90
-                Layout.preferredHeight: 30
-                onClicked: handleUndo()
-            }
-
-            Item { Layout.fillWidth: true }
-        }
-
-        // Status bar
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 26
-            color: "#f0f0f0"
-            radius: 3
-
-            Label {
-                id: statusLabel
-                anchors.fill: parent
-                anchors.margins: 6
-                font.pixelSize: 12
-                verticalAlignment: Text.AlignVCenter
-                color: "#888"
-            }
-        }
-
-        // Spacer
-        Item { Layout.fillHeight: true }
+        log("CLI plugin complete, exiting");
+        Qt.quit();
     }
 }

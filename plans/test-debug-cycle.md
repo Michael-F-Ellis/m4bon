@@ -1,7 +1,19 @@
 # Efficient Test/Debug Cycle — Investigation & Implementation Plan
 
 **Date:** 2026-06-14  
-**Status:** Proposed
+**Status:** Superseded — see Go/MusicXML direction below
+
+> **This plan was rendered obsolete by the decision to port the parser to Go
+> and generate MusicXML instead of fighting the MuseScore 4 QML plugin API.**
+> See `lessons/session-2026-06-14.md` §11-12 for the full reasoning.
+>
+> The MuseScore 4 plugin API (4.7.2) proved too constrained for rapid
+> development: no headless mode (`-j` crashes), no CLI plugin invocation,
+> `XMLHttpRequest` sandboxed, non-dialog plugins unreliable, "Reload Plugins"
+> button broken, and the only debug output is `console.log` to terminal.
+>
+> Go + MusicXML provides a 0.4s test cycle, full filesystem access, native
+> tie support, diff-able output, and zero runtime dependencies.
 
 ## Current workflow (painful)
 
