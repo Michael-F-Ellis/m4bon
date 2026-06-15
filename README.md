@@ -35,17 +35,11 @@ m4bon -time 6/8 "abc def"          # Specify time signature
 m4bon -f input.dsl -o output.mxl   # File in, file out
 ```
 
-## Why MusicXML instead of a MuseScore plugin?
+## Why MusicXML?
 
-The original version was a MuseScore 4 QML plugin (`m4bon.qml`). Plugin development on MS4.7 proved extremely constrained:
+MusicXML is the interchange format used by all major notation software (MuseScore, Finale, Dorico). It has native support for ties, tuplets, beaming, and accidentals — unlike MIDI — and is plain text (diff-able, grep-able, version-controllable).
 
-- No headless/CLI invocation — every change required a full MuseScore restart
-- Ties couldn't be created via the plugin API (8 approaches attempted, all failed)
-- `XMLHttpRequest` sandboxed — couldn't read test files from within the plugin
-- "Reload Plugins" button broken — changes required app restart
-- No debugger — only `console.log` to terminal
-
-Switching to MusicXML eliminated every constraint: sub-second test cycle, native tie support, diff-able output, zero runtime dependencies.
+The project started as a MuseScore 4 QML plugin but switched to Go + MusicXML when the plugin API proved too constrained (no headless mode, no debugger, 8-25s edit-test cycles). Go's `encoding/xml` and sub-second test cycles via `go test` made MusicXML output the right choice.
 
 ## Development
 

@@ -26,22 +26,7 @@ m4bon/
 ├── musicxml/
 │   └── xml.go              # MusicXML structs + generator
 ├── test/
-│   ├── cycle.sh            # Deprecated — MuseScore automation experiment
-│   ├── deploy.sh           # Deprecated — MuseScore plugin deploy
-│   ├── fixtures/           # MuseScore test scores (used by deprecated scripts)
-│   └── cases/              # .dsl test case files
-├── m4bon.qml               # Original QML plugin (reference only)
-├── m4bon-cli.qml           # Deprecated experiment: non-dialog plugin
-├── m4bon-runner.qml        # Deprecated experiment: dialog runner
-├── test-cli.qml            # Deprecated experiment: minimal non-dialog test
-├── plans/
-│   └── test-debug-cycle.md
-├── issues/
-│   └── no-ties.md
-├── INSERTING-TIED_NOTES.md
-├── TIES-VS-DOTS.md
-├── DEBUG-UNDER-MACOS.md
-├── MSCORE-CMDLINE-HELP
+│   └── cases/              # .dsl + .expected.mxml test case files
 ├── lessons/
 │   └── session-2026-06-14.md
 ├── AGENTS.md
@@ -125,7 +110,7 @@ Groups pitches into a single chord occupying one position slot. Strictly ascendi
 
 ```
 DSL text → stripDirectives (extract K, M) → sanitize → tokenize → parseGroup
-         → resolveDurations → splitNonStandardDurations → resolveOctaves → MusicXML
+         → resolveDurations → splitAtBarline → splitNonStandardDurations → resolveOctaves → MusicXML
 ```
 
 ### Output: MusicXML
@@ -173,7 +158,7 @@ go test ./...              # Run all tests (0.4s)
 | Go over Node.js | Single static binary, zero runtime deps, `encoding/xml`, excellent test facilities |
 | MusicXML over MIDI | Human-readable, diff-able, ties/tuplets native, works with all notation apps |
 | 480 DPPQ | Standard MIDI convention; cleanly divides all required durations |
-| Greedy duration split | Simple, correct for basic cases; engraving-aware splitting deferred |
+| Greedy duration split + barline-aware split | Greedy for non-standard durations; fraction-based barline\n  split (no ticks) runs first to respect the invisible-barline rule |
 | No external XML libs | `encoding/xml` covers the subset we need |
 
 ---
@@ -182,6 +167,5 @@ go test ./...              # Run all tests (0.4s)
 
 - Single staff (piano), single voice
 - All notes placed in measure 1 (no multi-measure layout yet)
-- Greedy split doesn't respect engraving rules (cross-bar ties, beat boundaries)
+- Barline split covers 4/4 midpoint only — odd time sigs may need adjustment
 - Key signature supported via `K` directive in DSL (default C major)
-- `.qml` files are reference only — active development is in Go
