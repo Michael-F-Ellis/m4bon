@@ -64,12 +64,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(result.Events) == 0 {
+	if len(result.Measures) == 0 {
 		fmt.Fprintln(os.Stderr, "No events produced (empty DSL?)")
 		os.Exit(1)
 	}
 
-	xml, err := musicxml.Generate(result.Events, result.TimeNum, result.TimeDen, result.Key.Fifths)
+	xml, err := musicxml.Generate(result.Measures, result.Key.Fifths)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Generation error: %v\n", err)
 		os.Exit(1)

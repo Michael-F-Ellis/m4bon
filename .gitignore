@@ -63,3 +63,6 @@ compile_commands.json
 *.test
 *.out
 .DS_Store
+
+# User-placed artifacts for assistant inspection
+/tmp/

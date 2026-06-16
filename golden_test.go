@@ -23,7 +23,28 @@ func TestGoldenFiles(t *testing.T) {
 		base := strings.TrimSuffix(name, ".dsl")
 		expectedPath := filepath.Join("test/cases", base+".expected.mxml")
 
+		// Error test cases: files named error-*.dsl
+		isErrorCase := strings.HasPrefix(base, "error-")
+
 		t.Run(base, func(t *testing.T) {
+			if isErrorCase {
+				// Run m4bon on the DSL file — expect failure
+				_, err := exec.Command("./m4bon", "-f", dslPath).Output()
+				if err == nil {
+					t.Fatalf("expected error for error test case %s", name)
+				}
+				// err is *exec.ExitError, check stderr for measure number
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					stderr := string(exitErr.Stderr)
+					if !strings.Contains(stderr, "Measure") && !strings.Contains(stderr, "measure") {
+						t.Errorf("error output for %s should contain measure info, got: %s", name, stderr)
+					}
+				} else {
+					t.Errorf("unexpected error type for %s: %v", name, err)
+				}
+				return
+			}
+
 			// Run m4bon on the DSL file
 			out, err := exec.Command("./m4bon", "-f", dslPath).Output()
 			if err != nil {
@@ -61,6 +82,9 @@ func TestMusicXMLSchemaValid(t *testing.T) {
 
 	for _, dslPath := range matches {
 		name := filepath.Base(dslPath)
+		if strings.HasPrefix(name, "error-") {
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
 			out, err := exec.Command("./m4bon", "-f", dslPath).Output()
 			if err != nil {

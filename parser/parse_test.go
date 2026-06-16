@@ -12,10 +12,10 @@ func TestParseBasicNotes(t *testing.T) {
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
-	if len(r.Events) != 4 {
-		t.Fatalf("expected 4 events, got %d", len(r.Events))
+	if len(r.Measures[0].Events) != 4 {
+		t.Fatalf("expected 4 events, got %d", len(r.Measures[0].Events))
 	}
-	for i, ev := range r.Events {
+	for i, ev := range r.Measures[0].Events {
 		if ev.Type != EventNote {
 			t.Errorf("event %d: expected note, got %s", i, ev.Type)
 		}
@@ -31,15 +31,15 @@ func TestParseSustainChain(t *testing.T) {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
 	// After splitNonStandardDurations: A half + A eighth (tied), B eighth, C quarter
-	if len(r.Events) != 4 {
-		t.Fatalf("expected 4 events (A half, A eighth, B eighth, C quarter), got %d", len(r.Events))
+	if len(r.Measures[0].Events) != 4 {
+		t.Fatalf("expected 4 events (A half, A eighth, B eighth, C quarter), got %d", len(r.Measures[0].Events))
 	}
 	// First event: A half
-	if r.Events[0].Duration.Num != 1 || r.Events[0].Duration.Den != 2 {
-		t.Errorf("event 0: expected 1/2, got %d/%d", r.Events[0].Duration.Num, r.Events[0].Duration.Den)
+	if r.Measures[0].Events[0].Duration.Num != 1 || r.Measures[0].Events[0].Duration.Den != 2 {
+		t.Errorf("event 0: expected 1/2, got %d/%d", r.Measures[0].Events[0].Duration.Num, r.Measures[0].Events[0].Duration.Den)
 	}
 	// Second event: A eighth (continuation)
-	if !r.Events[1].Split {
+	if !r.Measures[0].Events[1].Split {
 		t.Errorf("event 1 should be a split continuation")
 	}
 }
@@ -49,17 +49,17 @@ func TestParseTuplet(t *testing.T) {
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
-	if len(r.Events) != 4 { // tupletStart + 3 notes
-		t.Fatalf("expected 4 events (tuplet + 3 notes), got %d", len(r.Events))
+	if len(r.Measures[0].Events) != 4 { // tupletStart + 3 notes
+		t.Fatalf("expected 4 events (tuplet + 3 notes), got %d", len(r.Measures[0].Events))
 	}
-	if r.Events[0].Type != EventTupletStart {
+	if r.Measures[0].Events[0].Type != EventTupletStart {
 		t.Errorf("event 0 should be tupletStart")
 	}
 	for i := 1; i <= 3; i++ {
-		if r.Events[i].Type != EventNote {
+		if r.Measures[0].Events[i].Type != EventNote {
 			t.Errorf("event %d should be note", i)
 		}
-		if r.Events[i].Nominal == nil {
+		if r.Measures[0].Events[i].Nominal == nil {
 			t.Errorf("event %d should have nominal duration", i)
 		}
 	}
@@ -70,14 +70,14 @@ func TestParseChord(t *testing.T) {
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
-	if len(r.Events) != 2 {
-		t.Fatalf("expected 2 events (chord + note), got %d", len(r.Events))
+	if len(r.Measures[0].Events) != 2 {
+		t.Fatalf("expected 2 events (chord + note), got %d", len(r.Measures[0].Events))
 	}
-	if r.Events[0].Type != EventChord {
+	if r.Measures[0].Events[0].Type != EventChord {
 		t.Errorf("event 0 should be chord")
 	}
-	if len(r.Events[0].Midis) != 3 {
-		t.Errorf("chord should have 3 pitches, got %d", len(r.Events[0].Midis))
+	if len(r.Measures[0].Events[0].Midis) != 3 {
+		t.Errorf("chord should have 3 pitches, got %d", len(r.Measures[0].Events[0].Midis))
 	}
 }
 
@@ -102,13 +102,13 @@ func TestParseOctaveShift(t *testing.T) {
 			}
 			// Collect note/chord events (skip tuplet markers)
 			var mids []int
-			for _, ev := range r.Events {
+			for _, ev := range r.Measures[0].Events {
 				if ev.Type == EventNote || ev.Type == EventChord {
 					mids = append(mids, ev.Midi)
 				}
 			}
 			if len(mids) != len(tc.expected) {
-				t.Fatalf("expected %d notes, got %d (total events: %d)", len(tc.expected), len(mids), len(r.Events))
+				t.Fatalf("expected %d notes, got %d (total events: %d)", len(tc.expected), len(mids), len(r.Measures[0].Events))
 			}
 			for i, m := range mids {
 				if m != tc.expected[i] {
@@ -127,7 +127,7 @@ func TestParseAccidentalNatural(t *testing.T) {
 	}
 	expected := []int{-2, -1, 0, 1, 2}
 	var got []int
-	for _, ev := range r.Events {
+	for _, ev := range r.Measures[0].Events {
 		if ev.Type == EventNote || ev.Type == EventChord {
 			got = append(got, ev.Accidental)
 		}
@@ -148,10 +148,10 @@ func TestParseCompoundTime(t *testing.T) {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
 	// 6 eighths in 6/8, no tuplet needed
-	if len(r.Events) != 6 {
-		t.Fatalf("expected 6 events, got %d", len(r.Events))
+	if len(r.Measures[0].Events) != 6 {
+		t.Fatalf("expected 6 events, got %d", len(r.Measures[0].Events))
 	}
-	for i, ev := range r.Events {
+	for i, ev := range r.Measures[0].Events {
 		g := gcd(ev.Duration.Num, ev.Duration.Den)
 		num := ev.Duration.Num / g
 		den := ev.Duration.Den / g
@@ -192,6 +192,9 @@ func TestParseDSLFiles(t *testing.T) {
 	}
 	for _, path := range matches {
 		name := filepath.Base(path)
+		if strings.HasPrefix(name, "error-") {
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -214,8 +217,8 @@ func TestParseDSLFiles(t *testing.T) {
 			if r.Err != nil {
 				t.Fatalf("parse error for %s (%q): %v", name, dsl, r.Err)
 			}
-			if len(r.Events) == 0 {
-				t.Fatalf("no events produced for %s (%q)", name, dsl)
+			if len(r.Measures) == 0 {
+				t.Fatalf("no measures produced for %s (%q)", name, dsl)
 			}
 		})
 	}

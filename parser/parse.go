@@ -59,6 +59,7 @@ type Event struct {
 	Midi        int     // resolved pitch for single notes
 	Midis       []int   // resolved pitches for chords
 	Split       bool    // continuation from splitNonStandardDurations
+	TieNext     bool    // cross-measure tie to next measure's first note
 }
 
 // ParseResult holds the output of parsing a single beat group.
@@ -71,12 +72,36 @@ type ParseResult struct {
 
 // DSLResult holds the full parse output.
 type DSLResult struct {
-	Events  []Event
-	Key     KeySignature // parsed or default
-	TimeNum int          // parsed or default
-	TimeDen int          // parsed or default
-	Err     error
+	Measures []MeasureResult
+	Key      KeySignature // parsed or default
+	TimeNum  int          // parsed or default (initial)
+	TimeDen  int          // parsed or default (initial)
+	Err      error
 }
+
+// MeasureResult holds the parsed events and metadata for a single measure.
+type MeasureResult struct {
+	Events   []Event
+	TimeNum  int
+	TimeDen  int
+	Fifths   int
+	IsPickup bool
+}
+
+// BeatDuration codes for B directive.
+var BeatDurationCodes = map[string]BeatDuration{
+	"W":  {1, 1},
+	"H":  {1, 2},
+	"Q":  {1, 4},
+	"Q.": {3, 8},
+	"E":  {1, 8},
+	"E.": {3, 16},
+	"S":  {1, 16},
+	"T":  {1, 32},
+}
+
+// TicksPerWholeNote is the number of ticks in a whole note (DPPQ * 4).
+const TicksPerWholeNote = 1920
 
 // KeySignature represents a key signature via its position on the circle of fifths.
 // Positive values = sharps, negative values = flats, zero = C major.
@@ -313,11 +338,6 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 			}
 			if len(chordPitches) == 0 {
 				return err("empty chord", i)
-			}
-			for p := 1; p < len(chordPitches); p++ {
-				if chordPitches[p].Letter <= chordPitches[p-1].Letter {
-					return err("chord pitches must be strictly ascending", i)
-				}
 			}
 			slots = append(slots, Slot{Type: SlotChord, Pitches: chordPitches})
 			inChord = false

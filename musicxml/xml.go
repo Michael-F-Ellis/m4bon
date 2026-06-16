@@ -41,10 +41,10 @@ type Measure struct {
 }
 
 type Attributes struct {
-	Divisions int     `xml:"divisions"`
-	Key       Key     `xml:"key"`
-	Time      TimeSig `xml:"time"`
-	Clef      Clef    `xml:"clef"`
+	Divisions int      `xml:"divisions"`
+	Key       Key      `xml:"key"`
+	Time      TimeSig  `xml:"time"`
+	Clef      *Clef    `xml:"clef,omitempty"`
 }
 
 type Key struct {
@@ -265,37 +265,6 @@ func midiToStep(midi int) (step string, octave int, alter int) {
 	return "C", 4, 0
 }
 
-// minMeasureDuration returns the smallest note duration in the event list
-// in ticks. This is used to determine whether we need a pickup measure.
-func minMeasureDuration(events []parser.Event) int {
-	min := int(^uint(0) >> 1) // max int
-	for _, ev := range events {
-		if ev.Type == parser.EventTupletStart {
-			continue
-		}
-		d := durationToTicks(ev.Duration)
-		if d < min {
-			min = d
-		}
-	}
-	if min == int(^uint(0)>>1) {
-		return DPPQ // default quarter
-	}
-	return min
-}
-
-// totalDurationTicks returns the total duration of all events in ticks.
-func totalDurationTicks(events []parser.Event) int {
-	total := 0
-	for _, ev := range events {
-		if ev.Type == parser.EventTupletStart {
-			continue
-		}
-		total += durationToTicks(ev.Duration)
-	}
-	return total
-}
-
 // accidentalString maps the parser's accidental value to a MusicXML accidental element value.
 func accidentalString(acc int) string {
 	switch acc {
@@ -311,18 +280,8 @@ func accidentalString(acc int) string {
 	return ""
 }
 
-// Generate produces a MusicXML string from parsed events, time signature, and key signature.
-func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, error) {
-	beatTicks := DPPQ * 4 / timeDen * timeNum // ticks per beat * beats per measure
-	total := totalDurationTicks(events)
-
-	// We'll place all notes in the first measure (or more if they overflow).
-	// For simplicity: one measure with all notes, or split at measure boundaries.
-	numMeasures := (total + beatTicks - 1) / beatTicks
-	if numMeasures < 1 {
-		numMeasures = 1
-	}
-
+// Generate produces a MusicXML string from per-measure parsed events.
+func Generate(measures []parser.MeasureResult, initialFifths int) (string, error) {
 	score := ScorePartwise{
 		Version: "4.0",
 		PartList: PartList{
@@ -332,238 +291,256 @@ func Generate(events []parser.Event, timeNum, timeDen int, fifths int) (string, 
 		},
 	}
 
-	var notes []NoteEl
-	var tupletRatioNum, tupletRatioDen int
-	// isBeamable returns true for eighth-or-smaller note types that can be beamed.
-	isBeamable := func(nt string) bool {
-		switch nt {
-		case "eighth", "16th", "32nd", "64th", "128th":
-			return true
-		}
-		return false
-	}
+	// State tracking across measures
+	var prevTimeNum, prevTimeDen int
+	var prevFifths int // 0 = C major (default)
+	measCounter := 1
+	var allMeasures []Measure
 
-	// Track which pitch letters have had accidentals in this measure,
-	// so we know when to emit courtesy naturals.
-	type pitchState struct {
-		hasAccidental bool
-	}
-	pitchStates := make(map[string]*pitchState)
-
-	for i, ev := range events {
-		if ev.Type == parser.EventTupletStart {
-			tupletRatioNum = ev.Midi   // stored temporarily during parse
-			tupletRatioDen = ev.OctaveShift
-			continue
+	for _, meas := range measures {
+		measNum := measCounter
+		if meas.IsPickup {
+			measNum = 0
+		} else {
+			measCounter++
 		}
 
-		durTicks := durationToTicks(ev.Duration)
-		noteType := noteTypeForDuration(ev.Duration)
-		dotCount_ := dotCount(ev.Duration)
+		var xmlNotes []NoteEl
+		var tupletRatioNum, tupletRatioDen int
 
-		// For tuplet notes, also compute from nominal
-		if ev.Nominal != nil {
-			nt := noteTypeForDuration(*ev.Nominal)
-			if nt != "" {
-				noteType = nt
+		// Per-measure accidental tracking
+		type pitchState struct {
+			hasAccidental bool
+		}
+		pitchStates := make(map[string]*pitchState)
+
+		// Per-measure beam tracking
+		isBeamable := func(nt string) bool {
+			switch nt {
+			case "eighth", "16th", "32nd", "64th", "128th":
+				return true
 			}
-			// Tuplet notes use time-modification, not dots
-			dotCount_ = 0
+			return false
 		}
 
-		// Determine ties
-		var ties []TieEl
-		var tieds []TiedEl
-		if ev.Split {
-			ties = append(ties, TieEl{Type: "stop"})
-			tieds = append(tieds, TiedEl{Type: "stop"})
-		}
-		// Check if next event is a split continuation
-		if i+1 < len(events) && events[i+1].Split &&
-			ev.Type != parser.EventTupletStart {
-			ties = append(ties, TieEl{Type: "start"})
-			tieds = append(tieds, TiedEl{Type: "start"})
-		}
+		// Track tick position within this measure for beam detection
+		tick := 0
+		beatTicks := DPPQ * 4 / meas.TimeDen * meas.TimeNum
 
-		var notations *Notations
-		if len(tieds) > 0 {
-			notations = &Notations{Tied: tieds}
-		}
-
-		// Detect tuplet start/stop for visible tuplet bracket/number
-		if ev.Nominal != nil {
-			isFirst := i > 0 && events[i-1].Type == parser.EventTupletStart
-			isLast := i+1 >= len(events) || events[i+1].Nominal == nil
-			if isFirst || isLast {
-				if notations == nil {
-					notations = &Notations{}
-				}
-				tType := "start"
-				if isLast && !isFirst {
-					tType = "stop"
-				}
-				notations.Tuplet = []TupletEl{{Type: tType, Number: 1}}
-			}
-		}
-
-		switch ev.Type {
-		case parser.EventNote:
-			// Use the original letter and accidental directly from the event
-			// to preserve the correct enharmonic spelling (B♭ not A♯, etc.).
-			// Only derive octave from MIDI.
-			letter := strings.ToUpper(ev.Letter)
-			midiOct := ev.Midi / 12
-
-			// Determine accidental display
-			accidentalDisplay := accidentalString(ev.Accidental)
-			if accidentalDisplay == "" && ev.Accidental == 0 {
-				// Check if we need a courtesy natural (same pitch class had an accidental earlier)
-				if ps, ok := pitchStates[letter]; ok && ps.hasAccidental {
-					accidentalDisplay = "natural"
-				}
-			}
-			if ev.Accidental != 0 {
-				if pitchStates[letter] == nil {
-					pitchStates[letter] = &pitchState{}
-				}
-				pitchStates[letter].hasAccidental = true
+		for i, ev := range meas.Events {
+			if ev.Type == parser.EventTupletStart {
+				tupletRatioNum = ev.Midi
+				tupletRatioDen = ev.OctaveShift
+				continue
 			}
 
-			ne := NoteEl{
-				Pitch:      &PitchEl{Step: letter, Octave: midiOct - 1, Alter: ev.Accidental},
-				Duration:   durTicks,
-				Type:       noteType,
-				Dots:       makeDots(dotCount_),
-				Accidental: accidentalDisplay,
-				Tie:        ties,
-				Notations:  notations,
-				Voice:      1,
-				Staff:      1,
-			}
+			durTicks := durationToTicks(ev.Duration)
+			noteType := noteTypeForDuration(ev.Duration)
+			dotCount_ := dotCount(ev.Duration)
+
 			if ev.Nominal != nil {
-				ne.TimeModification = &TimeMod{
-					ActualNotes: fmt.Sprintf("%d", tupletRatioNum),
-					NormalNotes: fmt.Sprintf("%d", tupletRatioDen),
+				nt := noteTypeForDuration(*ev.Nominal)
+				if nt != "" {
+					noteType = nt
+				}
+				dotCount_ = 0
+			}
+
+			var ties []TieEl
+			var tieds []TiedEl
+			if ev.Split {
+				ties = append(ties, TieEl{Type: "stop"})
+				tieds = append(tieds, TiedEl{Type: "stop"})
+			}
+			if i+1 < len(meas.Events) && meas.Events[i+1].Split &&
+				ev.Type != parser.EventTupletStart {
+				ties = append(ties, TieEl{Type: "start"})
+				tieds = append(tieds, TiedEl{Type: "start"})
+			}
+			if ev.TieNext {
+				ties = append(ties, TieEl{Type: "start"})
+				tieds = append(tieds, TiedEl{Type: "start"})
+			}
+
+			var notations *Notations
+			if len(tieds) > 0 {
+				notations = &Notations{Tied: tieds}
+			}
+
+			if ev.Nominal != nil {
+				isFirst := i > 0 && meas.Events[i-1].Type == parser.EventTupletStart
+				isLast := i+1 >= len(meas.Events) || meas.Events[i+1].Nominal == nil
+				if isFirst || isLast {
+					if notations == nil {
+						notations = &Notations{}
+					}
+					tType := "start"
+					if isLast && !isFirst {
+						tType = "stop"
+					}
+					notations.Tuplet = []TupletEl{{Type: tType, Number: 1}}
 				}
 			}
-			notes = append(notes, ne)
 
-		case parser.EventRest:
-			ne := NoteEl{
-				Rest:     &RestEl{},
-				Duration: durTicks,
-				Type:     noteType,
-				Dots:     makeDots(dotCount_),
-				Voice:    1,
-				Staff:    1,
-			}
-			notes = append(notes, ne)
+			switch ev.Type {
+			case parser.EventNote:
+				letter := strings.ToUpper(ev.Letter)
+				midiOct := ev.Midi / 12
 
-		case parser.EventChord:
-			for pIdx, midi := range ev.Midis {
-				step, oct, alter := midiToStep(midi)
+				accidentalDisplay := accidentalString(ev.Accidental)
+				if accidentalDisplay == "" && ev.Accidental == 0 {
+					if ps, ok := pitchStates[letter]; ok && ps.hasAccidental {
+						accidentalDisplay = "natural"
+					}
+				}
+				if ev.Accidental != 0 {
+					if pitchStates[letter] == nil {
+						pitchStates[letter] = &pitchState{}
+					}
+					pitchStates[letter].hasAccidental = true
+				}
+
 				ne := NoteEl{
-					Pitch:    &PitchEl{Step: step, Octave: oct, Alter: alter},
-					Duration: durTicks,
-					Type:     noteType,
-					Dots:     makeDots(dotCount_),
-					Chord:    pIdx > 0,
-					Voice:    1,
-					Staff:    1,
+					Pitch:      &PitchEl{Step: letter, Octave: midiOct - 1, Alter: ev.Accidental},
+					Duration:   durTicks,
+					Type:       noteType,
+					Dots:       makeDots(dotCount_),
+					Accidental: accidentalDisplay,
+					Tie:        ties,
+					Notations:  notations,
+					Voice:      1,
+					Staff:      1,
 				}
-				if pIdx == 0 && ev.Nominal != nil {
+				if ev.Nominal != nil {
 					ne.TimeModification = &TimeMod{
 						ActualNotes: fmt.Sprintf("%d", tupletRatioNum),
 						NormalNotes: fmt.Sprintf("%d", tupletRatioDen),
 					}
 				}
-				notes = append(notes, ne)
+				xmlNotes = append(xmlNotes, ne)
+
+			case parser.EventRest:
+				ne := NoteEl{
+					Rest:     &RestEl{},
+					Duration: durTicks,
+					Type:     noteType,
+					Dots:     makeDots(dotCount_),
+					Voice:    1,
+					Staff:    1,
+				}
+				xmlNotes = append(xmlNotes, ne)
+
+			case parser.EventChord:
+				for pIdx, midi := range ev.Midis {
+					step, oct, alter := midiToStep(midi)
+					ne := NoteEl{
+						Pitch:      &PitchEl{Step: step, Octave: oct, Alter: alter},
+						Duration:   durTicks,
+						Type:       noteType,
+						Dots:       makeDots(dotCount_),
+						Chord:      pIdx > 0,
+						Tie:        ties,
+						Notations:  notations,
+						Voice:      1,
+						Staff:      1,
+					}
+					if pIdx == 0 && ev.Nominal != nil {
+						ne.TimeModification = &TimeMod{
+							ActualNotes: fmt.Sprintf("%d", tupletRatioNum),
+							NormalNotes: fmt.Sprintf("%d", tupletRatioDen),
+						}
+					}
+					xmlNotes = append(xmlNotes, ne)
+				}
 			}
 		}
-	}
 
-	// Add beam elements for consecutive beamable notes within the same beat.
-	// Track cumulative tick position to detect beat boundaries.
-	tick := 0
-	for i := range notes {
-		nt := notes[i].Type
-		if !isBeamable(nt) || notes[i].Chord {
-			tick += notes[i].Duration
-			continue
-		}
-
-		// Calculate which beat (0-based) this note starts on
-		beatPos := (tick % beatTicks) / (DPPQ * 4 / timeDen)
-
-		// Check if next note's beat position differs from this one
-		var nextBeatSame bool
-		if i+1 < len(notes) {
-			nextNT := notes[i+1].Type
-			if isBeamable(nextNT) && !notes[i+1].Chord {
-				nextTick := tick + notes[i].Duration
-				nextBeatPos := (nextTick % beatTicks) / (DPPQ * 4 / timeDen)
-				nextBeatSame = nextBeatPos == beatPos
+		// Add beam elements for consecutive beamable notes within this measure
+		tick = 0
+		for i := range xmlNotes {
+			nt := xmlNotes[i].Type
+			if !isBeamable(nt) || xmlNotes[i].Chord {
+				tick += xmlNotes[i].Duration
+				continue
 			}
-		}
 
-		// Check if previous note's beat position differs from this one
-		var prevBeatSame bool
-		if i > 0 {
-			prevNT := notes[i-1].Type
-			if isBeamable(prevNT) && !notes[i-1].Chord {
-				prevStart := tick - notes[i].Duration
-				prevBeatPos := (prevStart % beatTicks) / (DPPQ * 4 / timeDen)
-				prevBeatSame = prevBeatPos == beatPos
+			beatPos := (tick % beatTicks) / (DPPQ * 4 / meas.TimeDen)
+
+			var nextBeatSame bool
+			if i+1 < len(xmlNotes) {
+				nextNT := xmlNotes[i+1].Type
+				if isBeamable(nextNT) && !xmlNotes[i+1].Chord {
+					nextTick := tick + xmlNotes[i].Duration
+					nextBeatPos := (nextTick % beatTicks) / (DPPQ * 4 / meas.TimeDen)
+					nextBeatSame = nextBeatPos == beatPos
+				}
 			}
+
+			var prevBeatSame bool
+			if i > 0 {
+				prevNT := xmlNotes[i-1].Type
+				if isBeamable(prevNT) && !xmlNotes[i-1].Chord {
+					prevStart := tick - xmlNotes[i].Duration
+					prevBeatPos := (prevStart % beatTicks) / (DPPQ * 4 / meas.TimeDen)
+					prevBeatSame = prevBeatPos == beatPos
+				}
+			}
+
+			var beam string
+			if !prevBeatSame && nextBeatSame {
+				beam = "begin"
+			} else if prevBeatSame && nextBeatSame {
+				beam = "continue"
+			} else if prevBeatSame && !nextBeatSame {
+				beam = "end"
+			}
+			if beam != "" {
+				xmlNotes[i].Beams = []BeamEl{{Number: 1, Value: beam}}
+			}
+
+			tick += xmlNotes[i].Duration
 		}
 
-		var beam string
-		if !prevBeatSame && nextBeatSame {
-			beam = "begin"
-		} else if prevBeatSame && nextBeatSame {
-			beam = "continue"
-		} else if prevBeatSame && !nextBeatSame {
-			beam = "end"
-		}
-		if beam != "" {
-			notes[i].Beams = []BeamEl{{Number: 1, Value: beam}}
-		}
-
-		tick += notes[i].Duration
-	}
-
-	// Place notes in measures
-	measureNotes := make([][]NoteEl, numMeasures)
-	curTick := 0
-	for _, n := range notes {
-		mIdx := curTick / beatTicks
-		if mIdx >= numMeasures {
-			mIdx = numMeasures - 1
-		}
-		measureNotes[mIdx] = append(measureNotes[mIdx], n)
-		curTick += n.Duration
-	}
-
-	for m := 0; m < numMeasures; m++ {
-		meas := Measure{Number: m + 1}
-
-		if m == 0 {
-			meas.Attributes = &Attributes{
+		// Determine if attributes should be emitted
+		var attrs *Attributes
+		if measNum == 1 || measNum == 0 {
+			attrs = &Attributes{
 				Divisions: DPPQ,
-				Key:       Key{Fifths: fifths},
+				Key:       Key{Fifths: meas.Fifths},
 				Time: TimeSig{
-					Beats:    fmt.Sprintf("%d", timeNum),
-					BeatType: fmt.Sprintf("%d", timeDen),
+					Beats:    fmt.Sprintf("%d", meas.TimeNum),
+					BeatType: fmt.Sprintf("%d", meas.TimeDen),
 				},
-				Clef: Clef{Sign: "G", Line: 2},
+				Clef: &Clef{Sign: "G", Line: 2},
+			}
+		} else if meas.TimeNum != prevTimeNum || meas.TimeDen != prevTimeDen || meas.Fifths != prevFifths {
+			// Only emit the parts that changed. Omit clef (always G, never changes)
+			// to avoid courtesy clef warnings from renderers.
+			attrs = &Attributes{
+				Divisions: DPPQ,
+				Key:       Key{Fifths: meas.Fifths},
+				Time: TimeSig{
+					Beats:    fmt.Sprintf("%d", meas.TimeNum),
+					BeatType: fmt.Sprintf("%d", meas.TimeDen),
+				},
 			}
 		}
 
-		meas.Notes = measureNotes[m]
-		score.Parts = append(score.Parts, Part{ID: "P1", Measures: []Measure{meas}})
+		measXML := Measure{
+			Number:     measNum,
+			Attributes: attrs,
+			Notes:      xmlNotes,
+		}
+
+		allMeasures = append(allMeasures, measXML)
+
+		prevTimeNum = meas.TimeNum
+		prevTimeDen = meas.TimeDen
+		prevFifths = meas.Fifths
 	}
 
-	// Marshal to XML
+	score.Parts = append(score.Parts, Part{ID: "P1", Measures: allMeasures})
+
 	output, err := xml.MarshalIndent(score, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("xml marshal: %w", err)
