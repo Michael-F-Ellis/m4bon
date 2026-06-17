@@ -9,11 +9,14 @@ import (
 	"testing"
 )
 
+// repoRoot returns the module root directory (containing go.mod).
+
 var updateGolden = flag.Bool("update-golden", false, "Update golden (.expected.mxml) files with current output")
 
 func TestGoldenFiles(t *testing.T) {
 	// Find all .dsl files in test/cases/
-	matches, err := filepath.Glob("test/cases/*.dsl")
+	root := repoRoot()
+	matches, err := filepath.Glob(filepath.Join(root, "test/cases/*.dsl"))
 	if err != nil || len(matches) == 0 {
 		t.Fatal("no .dsl test case files found")
 	}
@@ -21,7 +24,7 @@ func TestGoldenFiles(t *testing.T) {
 	for _, dslPath := range matches {
 		name := filepath.Base(dslPath)
 		base := strings.TrimSuffix(name, ".dsl")
-		expectedPath := filepath.Join("test/cases", base+".expected.mxml")
+		expectedPath := filepath.Join(root, "test/cases", base+".expected.mxml")
 
 		// Error test cases: files named error-*.dsl
 		isErrorCase := strings.HasPrefix(base, "error-")
@@ -29,7 +32,7 @@ func TestGoldenFiles(t *testing.T) {
 		t.Run(base, func(t *testing.T) {
 			if isErrorCase {
 				// Run m4bon on the DSL file — expect failure
-				_, err := exec.Command("./m4bon", "-f", dslPath).Output()
+				_, err := exec.Command(filepath.Join(root, "m4bon"), "-f", dslPath).Output()
 				if err == nil {
 					t.Fatalf("expected error for error test case %s", name)
 				}

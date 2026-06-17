@@ -46,10 +46,11 @@ func resolveDurations(groups []ParseResult, beat BeatDuration) ([]Event, error) 
 }
 
 // resolveDurationsWithPrior is like resolveDurations but accepts an optional
-// prior event for cross-measure sustain ties. When the first group is a
-// sustain-only group, the prior event's pitch is used as the reference.
-func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEvent *Event) ([]Event, error) {
+// map of per-voice prior events for cross-measure sustain ties. Voice 0 is
+// the fallback for the legacy single-voice behavior.
+func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEvents map[int]*Event) ([]Event, error) {
 	var events []Event
+	voiceLastIdx := make(map[int]int) // per-voice last event index for sustain extension
 
 	for _, group := range groups {
 		if group.Err != nil {
@@ -63,28 +64,34 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 
 		activeCount := countActivePositions(group.Slots)
 
-		// Sustain-only group
+		// Sustain-only group (all positions are sustains)
 		if activeCount == 0 && len(group.Slots) > 0 {
 			if len(events) == 0 {
-				if priorEvent == nil || (priorEvent.Type != EventNote && priorEvent.Type != EventChord) {
+				// Cross-measure sustain: use priorEvent[0] as fallback
+				var pe *Event
+				if priorEvents != nil {
+					pe = priorEvents[0]
+				}
+				if pe == nil || (pe.Type != EventNote && pe.Type != EventChord) {
 					return nil, fmt.Errorf("sustain with no prior note")
 				}
-				// Cross-measure sustain: create a new event based on the prior event
 				sdNum := group.Multiplier * beat.Num
 				sdDen := beat.Den
 				ev := Event{
-					Type:        priorEvent.Type,
+					Type:        pe.Type,
 					Duration:    Fraction{Num: sdNum, Den: sdDen},
-					Letter:      priorEvent.Letter,
-					Accidental:  priorEvent.Accidental,
-					OctaveShift: priorEvent.OctaveShift,
+					Letter:      pe.Letter,
+					Accidental:  pe.Accidental,
+					OctaveShift: pe.OctaveShift,
 					Split:       true,
+					Voice:       1,
 				}
-				if priorEvent.Pitches != nil {
-					ev.Pitches = make([]Pitch, len(priorEvent.Pitches))
-					copy(ev.Pitches, priorEvent.Pitches)
+				if pe.Pitches != nil {
+					ev.Pitches = make([]Pitch, len(pe.Pitches))
+					copy(ev.Pitches, pe.Pitches)
 				}
 				events = append(events, ev)
+				voiceLastIdx[1] = len(events)-1
 			} else {
 				sdNum := group.Multiplier * beat.Num
 				sdDen := beat.Den
@@ -138,7 +145,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 			})
 			// Store tuplet ratio in the dummy event — we encode it in the
 			// next notes' time-modification in the MusicXML layer.
-			events[len(events)-1].Midi = ratioNum     // temporary: actual-notes
+			events[len(events)-1].Midi = ratioNum      // temporary: actual-notes
 			events[len(events)-1].OctaveShift = ratioDen // temporary: normal-notes
 		}
 
@@ -146,24 +153,29 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 			slot := group.Slots[s]
 			if slot.Type == SlotSustain {
 				if len(events) == 0 {
-					// Cross-measure sustain within a mixed group: create a
-					// starting event from the prior measure's last note.
-					if priorEvent == nil || (priorEvent.Type != EventNote && priorEvent.Type != EventChord) {
+					// Cross-measure sustain within a mixed group
+					var pe *Event
+					if priorEvents != nil {
+						pe = priorEvents[0]
+					}
+					if pe == nil || (pe.Type != EventNote && pe.Type != EventChord) {
 						return nil, fmt.Errorf("sustain with no prior note across groups")
 					}
 					ev := Event{
-						Type:        priorEvent.Type,
+						Type:        pe.Type,
 						Duration:    Fraction{Num: posNum, Den: posDen},
-						Letter:      priorEvent.Letter,
-						Accidental:  priorEvent.Accidental,
-						OctaveShift: priorEvent.OctaveShift,
+						Letter:      pe.Letter,
+						Accidental:  pe.Accidental,
+						OctaveShift: pe.OctaveShift,
 						Split:       true,
+						Voice:       1,
 					}
-					if priorEvent.Pitches != nil {
-						ev.Pitches = make([]Pitch, len(priorEvent.Pitches))
-						copy(ev.Pitches, priorEvent.Pitches)
+					if pe.Pitches != nil {
+						ev.Pitches = make([]Pitch, len(pe.Pitches))
+						copy(ev.Pitches, pe.Pitches)
 					}
 					events = append(events, ev)
+					voiceLastIdx[1] = len(events)-1
 				} else {
 					last := &events[len(events)-1]
 					last.Duration.Num = last.Duration.Num*posDen + posNum*last.Duration.Den
@@ -179,10 +191,86 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 						last.Nominal.Den /= ng2
 					}
 				}
+			} else if slot.Type == SlotChord && slot.Entries != nil {
+				// Voice-poly chord: expand into per-voice events
+				for vi, entry := range slot.Entries {
+					voice := vi + 1 // voices are 1-based
+					switch entry.Type {
+					case SlotNote:
+						ev := Event{
+							Type:        EventNote,
+							Duration:    Fraction{Num: posNum, Den: posDen},
+							Letter:      entry.Letter,
+							Accidental:  entry.Accidental,
+							OctaveShift: entry.OctaveShift,
+							Voice:       voice,
+						}
+						if needsTuplet {
+							ev.Nominal = &Fraction{Num: nomNum, Den: nomDen}
+						}
+						events = append(events, ev)
+						voiceLastIdx[voice] = len(events)-1
+
+					case SlotSustain:
+						// Extend the last event for this voice
+						idx, ok := voiceLastIdx[voice]
+						if !ok && priorEvents != nil {
+							// Check for cross-measure sustain
+							if pe, hasPrior := priorEvents[voice]; hasPrior {
+								ev := Event{
+									Type:        pe.Type,
+									Duration:    Fraction{Num: posNum, Den: posDen},
+									Letter:      pe.Letter,
+									Accidental:  pe.Accidental,
+									OctaveShift: pe.OctaveShift,
+									Split:       true,
+									Voice:       voice,
+								}
+								if pe.Pitches != nil {
+									ev.Pitches = make([]Pitch, len(pe.Pitches))
+									copy(ev.Pitches, pe.Pitches)
+								}
+								events = append(events, ev)
+								voiceLastIdx[voice] = len(events) - 1
+								continue
+							}
+						}
+						if !ok {
+							return nil, fmt.Errorf("sustain in voice %d with no prior note", voice)
+						}
+						last := &events[idx]
+						last.Duration.Num = last.Duration.Num*posDen + posNum*last.Duration.Den
+						last.Duration.Den = last.Duration.Den * posDen
+						gVal := gcd(last.Duration.Num, last.Duration.Den)
+						last.Duration.Num /= gVal
+						last.Duration.Den /= gVal
+						if last.Nominal != nil {
+							last.Nominal.Num = last.Nominal.Num*posDen + posNum*last.Nominal.Den
+							last.Nominal.Den = last.Nominal.Den * posDen
+							ng2 := gcd(last.Nominal.Num, last.Nominal.Den)
+							last.Nominal.Num /= ng2
+							last.Nominal.Den /= ng2
+						}
+
+					case SlotRest:
+						ev := Event{
+							Type:     EventRest,
+							Duration: Fraction{Num: posNum, Den: posDen},
+							Voice:    voice,
+						}
+						if needsTuplet {
+							ev.Nominal = &Fraction{Num: nomNum, Den: nomDen}
+						}
+						events = append(events, ev)
+						// Rests don't establish a voice for future sustains
+					}
+				}
 			} else {
+				// Traditional note or chord — single-voice (Voice=1)
 				ev := Event{
 					Type:     EventType(slot.Type),
 					Duration: Fraction{Num: posNum, Den: posDen},
+					Voice:    1,
 				}
 				if needsTuplet {
 					ev.Nominal = &Fraction{Num: nomNum, Den: nomDen}
@@ -196,6 +284,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 					ev.Pitches = slot.Pitches
 				}
 				events = append(events, ev)
+				voiceLastIdx[1] = len(events)-1
 			}
 		}
 	}
@@ -485,15 +574,26 @@ func timeSigTicks(num, den int) int {
 }
 
 // totalTicks returns the total duration of events in ticks.
+// For multi-voice content, returns the max tick across all voices.
 func totalTicks(events []Event) int {
-	total := 0
+	voiceTick := make(map[int]int)
+	maxTick := 0
 	for _, ev := range events {
 		if ev.Type == EventTupletStart {
 			continue
 		}
-		total += TicksPerWholeNote * ev.Duration.Num / ev.Duration.Den
+		v := ev.Voice
+		if v == 0 {
+			v = 1
+		}
+		t := voiceTick[v]
+		t += TicksPerWholeNote * ev.Duration.Num / ev.Duration.Den
+		voiceTick[v] = t
+		if t > maxTick {
+			maxTick = t
+		}
 	}
-	return total
+	return maxTick
 }
 
 // deriveTimeSig derives a time signature from a number of beats and a beat duration.
@@ -632,20 +732,29 @@ func ParseDSL(text string) DSLResult {
 			break
 		}
 
-		// Build prior event for cross-measure sustain
-		var priorEvent *Event
+		// Build per-voice prior events for cross-measure sustain
+		priorEvents := make(map[int]*Event)
 		if len(measures) > 0 {
-			for i := len(measures[len(measures)-1].Events) - 1; i >= 0; i-- {
-				ev := measures[len(measures)-1].Events[i]
+			prevEvents := measures[len(measures)-1].Events
+			for i := len(prevEvents) - 1; i >= 0; i-- {
+				ev := &prevEvents[i]
 				if ev.Type == EventNote || ev.Type == EventChord {
-					priorEvent = &ev
-					break
+					v := ev.Voice
+					if _, ok := priorEvents[v]; !ok {
+						priorEvents[v] = ev
+					}
+				}
+			}
+			// Ensure legacy fallback (voice 0) is always present
+			if _, ok := priorEvents[0]; !ok {
+				if _, ok := priorEvents[1]; ok {
+					priorEvents[0] = priorEvents[1]
 				}
 			}
 		}
 
 		// Resolve durations
-		events, err := resolveDurationsWithPrior(groups, beat, priorEvent)
+		events, err := resolveDurationsWithPrior(groups, beat, priorEvents)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("Measure %d: %v", mi+1, err))
 			if len(errs) >= 10 {
@@ -655,12 +764,20 @@ func ParseDSL(text string) DSLResult {
 		}
 
 		// If the first event is a cross-measure sustain (Split && !Nominal continuation),
-		// mark the previous measure's last note for tie-start
+		// mark the previous measure's last note of the same voice for tie-start
 		if len(events) > 0 && events[0].Split && len(measures) > 0 {
+			sustainVoice := events[0].Voice
+			if sustainVoice == 0 {
+				sustainVoice = 1
+			}
 			prevMeas := &measures[len(measures)-1]
 			for i := len(prevMeas.Events) - 1; i >= 0; i-- {
 				ev := &prevMeas.Events[i]
-				if ev.Type == EventNote || ev.Type == EventChord {
+				evVoice := ev.Voice
+				if evVoice == 0 {
+					evVoice = 1
+				}
+				if (ev.Type == EventNote || ev.Type == EventChord) && evVoice == sustainVoice {
 					ev.TieNext = true
 					break
 				}
@@ -746,17 +863,30 @@ func ParseDSL(text string) DSLResult {
 		currentTimeDen = effectiveTimeDen
 	}
 
-	// Resolve octaves across all measures
-	lastPitch := 60
+	// Resolve octaves across all measures — per-voice reference tracking
+	lastPitch := make(map[int]int)
+	lastPitch[1] = 60 // default: voice 1 starts at C4
 	for mi := range measures {
 		for i := range measures[mi].Events {
 			ev := &measures[mi].Events[i]
 			if ev.Type == EventTupletStart || ev.Type == EventRest {
 				continue
 			}
+
+			// Determine which voice this event belongs to
+			v := ev.Voice
+			if v == 0 {
+				v = 1 // Map voice 0 → voice 1 for reference tracking
+			}
+			ref, ok := lastPitch[v]
+			if !ok {
+				ref = 60
+				lastPitch[v] = ref
+			}
+
 			if ev.Type == EventNote {
-				ev.Midi = resolvePitch(ev.Letter, ev.Accidental, ev.OctaveShift, lastPitch)
-				lastPitch = ev.Midi
+				ev.Midi = resolvePitch(ev.Letter, ev.Accidental, ev.OctaveShift, ref)
+				lastPitch[v] = ev.Midi
 			} else if ev.Type == EventChord {
 				// For split continuations (within same measure or across barline),
 				// copy MIDI from the predecessor so tied chord fragments keep
@@ -780,7 +910,7 @@ func ParseDSL(text string) DSLResult {
 						continue
 					}
 				}
-				chordRef := lastPitch
+				chordRef := ref
 				for p := range ev.Pitches {
 					pi := ev.Pitches[p]
 					var m int
@@ -792,7 +922,7 @@ func ParseDSL(text string) DSLResult {
 					ev.Midis = append(ev.Midis, m)
 					chordRef = m
 				}
-				lastPitch = ev.Midis[len(ev.Midis)-1]
+				lastPitch[v] = ev.Midis[len(ev.Midis)-1]
 			}
 		}
 	}

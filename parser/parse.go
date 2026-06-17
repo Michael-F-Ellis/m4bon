@@ -25,10 +25,21 @@ type Slot struct {
 	Letter      string
 	Accidental  int
 	OctaveShift int
-	Pitches     []Pitch // for chords
+	Pitches     []Pitch     // for traditional chords (all notes, same voice)
+	Entries     []ChordEntry // for voice-poly chords (mix of notes/sustains/rests)
 }
 
 type Pitch struct {
+	Letter      string
+	Accidental  int
+	OctaveShift int
+}
+
+// ChordEntry represents a single entry in a voice-poly chord (one voice's
+// contribution). A chord is voice-poly when any entry is a sustain or rest;
+// otherwise it's a traditional single-voice chord.
+type ChordEntry struct {
+	Type        SlotType
 	Letter      string
 	Accidental  int
 	OctaveShift int
@@ -60,6 +71,7 @@ type Event struct {
 	Midis       []int   // resolved pitches for chords
 	Split       bool    // continuation from splitNonStandardDurations
 	TieNext     bool    // cross-measure tie to next measure's first note
+	Voice       int     // 0=default, 1,2,3 for voice-poly voices
 }
 
 // ParseResult holds the output of parsing a single beat group.
@@ -202,7 +214,7 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 	hasLetter := false
 	letter := ""
 	inChord := false
-	var chordPitches []Pitch
+	var chordPitches []ChordEntry
 
 	err := func(msg string, offset int) ParseResult {
 		return ParseResult{Multiplier: 1, Slots: nil, Err: errors.New(msg), ErrOffset: offset}
@@ -214,7 +226,7 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 				r := err("accidental/octave without pitch in chord", offset)
 				return &r
 			}
-			chordPitches = append(chordPitches, Pitch{Letter: letter, Accidental: acc + pendingAcc, OctaveShift: oct + pendingOct})
+			chordPitches = append(chordPitches, ChordEntry{Type: SlotNote, Letter: letter, Accidental: acc + pendingAcc, OctaveShift: oct + pendingOct})
 		} else {
 			if !hasLetter {
 				r := err("accidental/octave without pitch at end of group", offset)
@@ -294,6 +306,19 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 			i++
 			continue
 		case '-':
+			if inChord {
+				if hasLetter {
+					if r := emitNote(i); r != nil {
+						return *r
+					}
+				}
+				if len(chordPitches) == 0 && !priorPitchExists {
+					return err("sustain with no prior note", i)
+				}
+				chordPitches = append(chordPitches, ChordEntry{Type: SlotSustain})
+				i++
+				continue
+			}
 			if hasLetter {
 				if r := emitNote(i); r != nil {
 					return *r
@@ -306,6 +331,16 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 			i++
 			continue
 		case ';':
+			if inChord {
+				if hasLetter {
+					if r := emitNote(i); r != nil {
+						return *r
+					}
+				}
+				chordPitches = append(chordPitches, ChordEntry{Type: SlotRest})
+				i++
+				continue
+			}
 			if hasLetter {
 				if r := emitNote(i); r != nil {
 					return *r
@@ -339,7 +374,23 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 			if len(chordPitches) == 0 {
 				return err("empty chord", i)
 			}
-			slots = append(slots, Slot{Type: SlotChord, Pitches: chordPitches})
+			// Detect voice-poly (any entry is sustain or rest) vs traditional chord
+			isPoly := false
+			for _, e := range chordPitches {
+				if e.Type != SlotNote {
+					isPoly = true
+					break
+				}
+			}
+			if isPoly {
+				slots = append(slots, Slot{Type: SlotChord, Entries: chordPitches})
+			} else {
+				pitches := make([]Pitch, len(chordPitches))
+				for i, e := range chordPitches {
+					pitches[i] = Pitch{Letter: e.Letter, Accidental: e.Accidental, OctaveShift: e.OctaveShift}
+				}
+				slots = append(slots, Slot{Type: SlotChord, Pitches: pitches})
+			}
 			inChord = false
 			chordPitches = nil
 			i++

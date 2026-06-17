@@ -8,6 +8,15 @@ import (
 	"testing"
 )
 
+// repoRoot returns the module root directory (containing go.mod).
+
+func TestMain(m *testing.M) {
+	if err := os.Chdir(repoRoot()); err != nil {
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+
 func TestCLIBasicNotes(t *testing.T) {
 	out, err := exec.Command("./m4bon", "c d e f").Output()
 	if err != nil {

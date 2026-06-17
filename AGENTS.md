@@ -16,22 +16,26 @@ Originally a MuseScore 4 QML plugin — the parser was ported to Go when the Mus
 
 ```
 m4bon/
-├── main.go                 # CLI entry point
-├── main_test.go            # Integration tests (CLI invocation)
-├── go.mod / go.sum         # Go module
+├── m4bon.go                 # Public API: m4bon.Compile(dsl) → (string, error)
+├── go.mod / go.sum          # Go module (github.com/mellis/m4bon)
+├── cmd/
+│   └── m4bon/
+│       ├── main.go          # CLI entry point
+│       ├── main_test.go     # Integration tests (CLI invocation)
+│       └── golden_test.go   # Golden file tests
 ├── parser/
-│   ├── parse.go            # Tokenizer + parseGroup state machine
-│   ├── pipeline.go         # resolveDurations, split, octaves, ParseDSL
-│   └── parse_test.go       # Unit tests for parser
+│   ├── parse.go             # Tokenizer + parseGroup state machine
+│   ├── pipeline.go          # resolveDurations, split, octaves, ParseDSL
+│   └── parse_test.go        # Unit tests for parser
 ├── musicxml/
-│   └── xml.go              # MusicXML structs + generator
+│   └── xml.go               # MusicXML structs + generator
 ├── test/
-│   └── cases/              # .dsl + .expected.mxml test case files
+│   └── cases/               # .dsl + .expected.mxml test case files
 ├── lessons/
 │   └── session-2026-06-14.md
 ├── AGENTS.md
 ├── README.md
-├── LICENSE                 # MIT
+├── LICENSE                  # MIT
 └── .gitignore
 ```
 
@@ -91,9 +95,20 @@ Extends the **previous pitch** through its position slot(s). A `-` at the start 
 
 Produces silence at that position slot. Counts as active for subdivision.
 
-### Chord grouping `(...)`
+### Chord grouping `(...)` and voice-poly chords
 
 Groups pitches into a single chord occupying one position slot. Strictly ascending.
+
+When `-` or `;` appears inside `()`, the chord becomes **voice-polyphonic** — each entry is a separate voice:
+
+| Inside `()` | Meaning |
+|---|---|
+| `(ceg)` | Traditional chord: C+E+G in voice 1 |
+| `(c - e)` | Voice 1: C, Voice 2: sustain, Voice 3: E |
+| `(-e)` | Voice 1: sustain, Voice 2: E |
+| `(c;e)` | Voice 1: C, Voice 2: rest, Voice 3: E |
+
+Voice indices are 1-based by entry position. Sustains extend the same voice's prior event. Cross-group and cross-measure sustain chains work per-voice. Max 4 voices per chord recommended.
 
 ### Pitch entry
 
@@ -143,11 +158,18 @@ Examples:
 ## Essential Commands
 
 ```bash
-go build -o m4bon .       # Build (0.5s)
-go test ./...              # Run all tests (0.4s)
-./m4bon "c d e f"         # Quick test
-./notify.sh "message"     # Send iMessage notification to maintainer
+go build -o m4bon ./cmd/m4bon/  # Build (0.5s)
+go test ./...                    # Run all tests (0.4s)
+./m4bon "c d e f"               # Quick test
+./notify.sh "message"           # Send iMessage notification to maintainer
 ```
+
+## Library Usage
+
+```go
+import "github.com/mellis/m4bon"
+
+xml, err := m4bon.Compile("M4/4 (c) (-e) (-g) | (-f) (d-) (b-) | (ce) - -")
 
 ---
 
@@ -157,15 +179,19 @@ go test ./...              # Run all tests (0.4s)
 |---|---|
 | Go over Node.js | Single static binary, zero runtime deps, `encoding/xml`, excellent test facilities |
 | MusicXML over MIDI | Human-readable, diff-able, ties/tuplets native, works with all notation apps |
+| `cmd/m4bon/main.go` layout | Standard Go project layout — root is library package `m4bon`, CLI is `cmd/m4bon/` |
+| Slice indices for voice tracking | Pointers into `append`-ed slices become stale on reallocation; use `voiceLastIdx map[int]int` instead |
 | 480 DPPQ | Standard MIDI convention; cleanly divides all required durations |
-| Greedy duration split + barline-aware split | Greedy for non-standard durations; fraction-based barline\n  split (no ticks) runs first to respect the invisible-barline rule |
+| Events sorted by (tick, voice) in XML | MusicXML requires notes in onset order; multi-voice events interleave by tick then voice |
+| Greedy duration split + barline-aware split | Greedy for non-standard durations; fraction-based barline split (no ticks) runs first to respect the invisible-barline rule |
 | No external XML libs | `encoding/xml` covers the subset we need |
 
 ---
 
 ## Known Limitations
 
-- Single staff (piano), single voice
-- All notes placed in measure 1 (no multi-measure layout yet)
+- Single staff (piano), maximum 4 voices per chord
+- No nested chords inside voice-poly groups
+- Voice-poly tuplet combinations not yet supported
 - Barline split covers 4/4 midpoint only — odd time sigs may need adjustment
-- Key signature supported via `K` directive in DSL (default C major)
+- Beaming may be incomplete for multi-voice measures (same-voice notes at non-adjacent sorted positions)

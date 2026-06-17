@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/mellis/m4bon/parser"
@@ -305,9 +306,6 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 			measCounter++
 		}
 
-		var xmlNotes []NoteEl
-		var tupletRatioNum, tupletRatioDen int
-
 		// Per-measure accidental tracking
 		type pitchState struct {
 			hasAccidental bool
@@ -323,11 +321,50 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 			return false
 		}
 
-		// Track tick position within this measure for beam detection
-		tick := 0
+		// Pre-compute per-event tie and tuplet metadata (uses original event order)
+		type eventMeta struct {
+			hasTieStart   bool
+			hasTieStop    bool
+			hasTupStart   bool
+			hasTupStop    bool
+		}
+		meta := make([]eventMeta, len(meas.Events))
+		for i, ev := range meas.Events {
+			if ev.Split {
+				meta[i].hasTieStop = true
+			}
+			if i+1 < len(meas.Events) && meas.Events[i+1].Split &&
+				ev.Type != parser.EventTupletStart {
+				meta[i].hasTieStart = true
+			}
+			if ev.TieNext {
+				meta[i].hasTieStart = true
+			}
+			if ev.Nominal != nil {
+				isFirst := i > 0 && meas.Events[i-1].Type == parser.EventTupletStart
+				isLast := i+1 >= len(meas.Events) || meas.Events[i+1].Nominal == nil
+				meta[i].hasTupStart = isFirst
+				meta[i].hasTupStop = isLast && !isFirst
+			}
+		}
+
+		// Build tick-sorted note entries (interleave voices by onset time)
+		type noteEntry struct {
+			tick int
+			note NoteEl
+		}
+		var entries []noteEntry
+		voiceTick := make(map[int]int)
+		var tupletRatioNum, tupletRatioDen int
 		beatTicks := DPPQ * 4 / meas.TimeDen * meas.TimeNum
 
 		for i, ev := range meas.Events {
+			// Map event voice to MusicXML voice (1-based, 0→1)
+			voice := ev.Voice
+			if voice < 1 {
+				voice = 1
+			}
+
 			if ev.Type == parser.EventTupletStart {
 				tupletRatioNum = ev.Midi
 				tupletRatioDen = ev.OctaveShift
@@ -346,18 +383,14 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 				dotCount_ = 0
 			}
 
+			// Ties from pre-computed metadata
 			var ties []TieEl
 			var tieds []TiedEl
-			if ev.Split {
+			if meta[i].hasTieStop {
 				ties = append(ties, TieEl{Type: "stop"})
 				tieds = append(tieds, TiedEl{Type: "stop"})
 			}
-			if i+1 < len(meas.Events) && meas.Events[i+1].Split &&
-				ev.Type != parser.EventTupletStart {
-				ties = append(ties, TieEl{Type: "start"})
-				tieds = append(tieds, TiedEl{Type: "start"})
-			}
-			if ev.TieNext {
+			if meta[i].hasTieStart {
 				ties = append(ties, TieEl{Type: "start"})
 				tieds = append(tieds, TiedEl{Type: "start"})
 			}
@@ -366,21 +399,21 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 			if len(tieds) > 0 {
 				notations = &Notations{Tied: tieds}
 			}
-
-			if ev.Nominal != nil {
-				isFirst := i > 0 && meas.Events[i-1].Type == parser.EventTupletStart
-				isLast := i+1 >= len(meas.Events) || meas.Events[i+1].Nominal == nil
-				if isFirst || isLast {
-					if notations == nil {
-						notations = &Notations{}
-					}
-					tType := "start"
-					if isLast && !isFirst {
-						tType = "stop"
-					}
-					notations.Tuplet = []TupletEl{{Type: tType, Number: 1}}
+			if meta[i].hasTupStart || meta[i].hasTupStop {
+				if notations == nil {
+					notations = &Notations{}
+				}
+				if meta[i].hasTupStart && !meta[i].hasTupStop {
+					notations.Tuplet = []TupletEl{{Type: "start", Number: 1}}
+				} else if meta[i].hasTupStop && !meta[i].hasTupStart {
+					notations.Tuplet = []TupletEl{{Type: "stop", Number: 1}}
+				} else if meta[i].hasTupStart && meta[i].hasTupStop {
+					// Single tuplet note (start and stop)
+					notations.Tuplet = []TupletEl{{Type: "start", Number: 1}}
 				}
 			}
+
+			tick := voiceTick[voice]
 
 			switch ev.Type {
 			case parser.EventNote:
@@ -408,7 +441,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 					Accidental: accidentalDisplay,
 					Tie:        ties,
 					Notations:  notations,
-					Voice:      1,
+					Voice:      voice,
 					Staff:      1,
 				}
 				if ev.Nominal != nil {
@@ -417,7 +450,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 						NormalNotes: fmt.Sprintf("%d", tupletRatioDen),
 					}
 				}
-				xmlNotes = append(xmlNotes, ne)
+				entries = append(entries, noteEntry{tick, ne})
 
 			case parser.EventRest:
 				ne := NoteEl{
@@ -425,10 +458,10 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 					Duration: durTicks,
 					Type:     noteType,
 					Dots:     makeDots(dotCount_),
-					Voice:    1,
+					Voice:    voice,
 					Staff:    1,
 				}
-				xmlNotes = append(xmlNotes, ne)
+				entries = append(entries, noteEntry{tick, ne})
 
 			case parser.EventChord:
 				for pIdx, midi := range ev.Midis {
@@ -441,7 +474,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 						Chord:      pIdx > 0,
 						Tie:        ties,
 						Notations:  notations,
-						Voice:      1,
+						Voice:      voice,
 						Staff:      1,
 					}
 					if pIdx == 0 && ev.Nominal != nil {
@@ -450,24 +483,41 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 							NormalNotes: fmt.Sprintf("%d", tupletRatioDen),
 						}
 					}
-					xmlNotes = append(xmlNotes, ne)
+					entries = append(entries, noteEntry{tick, ne})
 				}
 			}
+
+			voiceTick[voice] = tick + durTicks
 		}
 
-		// Add beam elements for consecutive beamable notes within this measure
-		tick = 0
+		// Sort entries by (tick, voice) for correct MusicXML onset order
+		sort.SliceStable(entries, func(i, j int) bool {
+			if entries[i].tick != entries[j].tick {
+				return entries[i].tick < entries[j].tick
+			}
+			return entries[i].note.Voice < entries[j].note.Voice
+		})
+
+		xmlNotes := make([]NoteEl, len(entries))
+		for i, e := range entries {
+			xmlNotes[i] = e.note
+		}
+
+		// Add beam elements — per-voice tick tracking so voices don't cross-beam
+		beamVoiceTick := make(map[int]int)
 		for i := range xmlNotes {
+			v := xmlNotes[i].Voice
+			tick := beamVoiceTick[v]
 			nt := xmlNotes[i].Type
 			if !isBeamable(nt) || xmlNotes[i].Chord {
-				tick += xmlNotes[i].Duration
+				beamVoiceTick[v] = tick + xmlNotes[i].Duration
 				continue
 			}
 
 			beatPos := (tick % beatTicks) / (DPPQ * 4 / meas.TimeDen)
 
 			var nextBeatSame bool
-			if i+1 < len(xmlNotes) {
+			if i+1 < len(xmlNotes) && xmlNotes[i+1].Voice == v {
 				nextNT := xmlNotes[i+1].Type
 				if isBeamable(nextNT) && !xmlNotes[i+1].Chord {
 					nextTick := tick + xmlNotes[i].Duration
@@ -477,7 +527,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 			}
 
 			var prevBeatSame bool
-			if i > 0 {
+			if i > 0 && xmlNotes[i-1].Voice == v {
 				prevNT := xmlNotes[i-1].Type
 				if isBeamable(prevNT) && !xmlNotes[i-1].Chord {
 					prevStart := tick - xmlNotes[i].Duration
@@ -498,7 +548,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 				xmlNotes[i].Beams = []BeamEl{{Number: 1, Value: beam}}
 			}
 
-			tick += xmlNotes[i].Duration
+			beamVoiceTick[v] = tick + xmlNotes[i].Duration
 		}
 
 		// Determine if attributes should be emitted

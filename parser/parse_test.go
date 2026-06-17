@@ -223,3 +223,121 @@ func TestParseDSLFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestParseVoicePolyChord(t *testing.T) {
+	// (c) (-e) starts voice 1 with C, then extends v1 and starts v2 with E
+	r := ParseDSL("(c) (-e)")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	evs := r.Measures[0].Events
+	// (c) = C quarter v1; (-e) = sustain extends v1 by quarter + E quarter v2
+	if len(evs) != 2 {
+		t.Fatalf("expected 2 events (C half v1 + E quarter v2), got %d", len(evs))
+	}
+	if evs[0].Type != EventChord {
+		t.Errorf("event 0: expected EventChord, got %s", evs[0].Type)
+	}
+	if evs[1].Type != EventNote || evs[1].Voice != 2 || evs[1].Letter != "e" {
+		t.Errorf("event 1: expected E note voice 2")
+	}
+	// Voice 1's C should be extended to a half note by the sustain
+	if evs[0].Duration.Num != 1 || evs[0].Duration.Den != 2 {
+		t.Errorf("voice 1 C: expected 1/2 duration, got %d/%d", evs[0].Duration.Num, evs[0].Duration.Den)
+	}
+}
+
+func TestParseVoicePolyThreeEntry(t *testing.T) {
+	// (c - e) as a single group errors because sustain at entry 1 is voice 2 with no prior
+	r := ParseDSL("(c-e)")
+	if r.Err == nil {
+		t.Errorf("expected error: sustain in voice 2 with no prior note")
+	}
+}
+
+func TestParseVoicePolyWithRest(t *testing.T) {
+	r := ParseDSL("(c;e)")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	evs := r.Measures[0].Events
+	// 3 entries: C (v1), rest (v2, standalone), E (v3)
+	if len(evs) != 3 {
+		t.Fatalf("expected 3 events (C v1 + rest v2 + E v3), got %d", len(evs))
+	}
+	if evs[0].Type != EventNote || evs[0].Voice != 1 || evs[0].Letter != "c" {
+		t.Errorf("event 0: expected C note voice 1")
+	}
+	if evs[1].Type != EventRest || evs[1].Voice != 2 {
+		t.Errorf("event 1: expected rest voice 2")
+	}
+	if evs[2].Type != EventNote || evs[2].Voice != 3 || evs[2].Letter != "e" {
+		t.Errorf("event 2: expected E note voice 3")
+	}
+}
+
+func TestParseVoicePolyTraditionalUnchanged(t *testing.T) {
+	r := ParseDSL("(ceg)")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	evs := r.Measures[0].Events
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 chord event, got %d", len(evs))
+	}
+	if evs[0].Type != EventChord {
+		t.Errorf("expected EventChord, got %s", evs[0].Type)
+	}
+	if len(evs[0].Midis) != 3 {
+		t.Errorf("expected 3 midi pitches, got %d", len(evs[0].Midis))
+	}
+}
+
+
+func TestParseVoicePolySustainError(t *testing.T) {
+	// (-e) has sustain at entry 0 (voice 1) with no prior
+	r := ParseDSL("(-e)")
+	if r.Err == nil {
+		t.Errorf("expected error for sustain with no prior note")
+	}
+	// (c-e) has sustain at entry 1 (voice 2) with no prior voice 2
+	r2 := ParseDSL("(c-e)")
+	if r2.Err == nil {
+		t.Errorf("expected error for sustain in voice 2 with no prior note")
+	}
+}
+
+func TestParseVoicePolyThreeGroupSustain(t *testing.T) {
+	// (c) (-e) (-g) → v1: C dotted half (3/4) split at midpoint of 4/4,
+	// so C half + C eighth(continuation) + v2: E+G quarters
+	r := ParseDSL("(c) (-e) (-g)")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	evs := r.Measures[0].Events
+	// Voice 1 C gets split at barline: 5 events total (C half + C eighth-tie +
+	// E + G + tupletStart? no, no tuplet)
+	if len(evs) != 4 {
+		t.Fatalf("expected 4 events (C half + C eighth tied + E + G), got %d", len(evs))
+	}
+	// Voice 1 C split into half (960) + eighth tied (480) = 3/4 total
+	// events[0] = C first half (Voice=1, Dur=1/2, Split=false)
+	// events[1] = C second half (Voice=1, Dur=1/4, Split=true)
+	// events[2] = E quarter (Voice=2)
+	// events[3] = G quarter (Voice=2)
+	if evs[0].Duration.Num != 1 || evs[0].Duration.Den != 2 {
+		t.Errorf("event 0 (C first half): expected 1/2, got %d/%d", evs[0].Duration.Num, evs[0].Duration.Den)
+	}
+	if evs[1].Duration.Num != 1 || evs[1].Duration.Den != 4 {
+		t.Errorf("event 1 (C second half): expected 1/4, got %d/%d", evs[1].Duration.Num, evs[1].Duration.Den)
+	}
+	if !evs[1].Split {
+		t.Errorf("event 1 should be a split continuation")
+	}
+	if evs[2].Voice != 2 || evs[2].Letter != "e" {
+		t.Errorf("event 2: expected E voice 2")
+	}
+	if evs[3].Voice != 2 || evs[3].Letter != "g" {
+		t.Errorf("event 3: expected G voice 2")
+	}
+}
