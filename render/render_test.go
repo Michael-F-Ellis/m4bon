@@ -27,7 +27,7 @@ func allMeasuresCells(t *testing.T, dsl string) []CellSeq {
 	if r.Err != nil {
 		t.Fatalf("ParseDSL(%q): %v", dsl, r.Err)
 	}
-	return buildCells(r.Measures)
+	return BuildCells(r.Measures)
 }
 
 // cellByContent finds the first cell with the given Content prefix.

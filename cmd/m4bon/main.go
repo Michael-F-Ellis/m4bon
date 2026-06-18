@@ -5,6 +5,9 @@
 //   m4bon -f input.dsl                 # DSL from file
 //   m4bon -f input.dsl -o output.mxl   # Write to file
 //   m4bon -time 6/8 "abc def"          # Specify time signature
+//   m4bon -tui                         # Launch interactive TUI
+//   m4bon -tui -f input.dsl            # Launch TUI with file loaded
+//   m4bon -tui -f input.dsl -bpm 96    # Launch TUI with custom BPM
 package main
 
 import (
@@ -13,6 +16,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mellis/m4bon/cmd/m4bon/tui"
 	"github.com/mellis/m4bon/musicxml"
 	"github.com/mellis/m4bon/parser"
 	"github.com/mellis/m4bon/render"
@@ -22,6 +26,8 @@ func main() {
 	inputFile := flag.String("f", "", "Read DSL from file instead of argument")
 	outputFile := flag.String("o", "", "Write MusicXML to file instead of stdout")
 	renderFlag := flag.Bool("render", false, "Output colorized text format instead of MusicXML")
+	tuiFlag := flag.Bool("tui", false, "Launch the interactive TUI performance/learning tool")
+	bpmFlag := flag.Float64("bpm", 120, "Tempo in beats per minute (for TUI mode)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: m4bon [options] [dsl]\n\n")
 		fmt.Fprintf(os.Stderr, "Convert m4bon beat-oriented DSL to MusicXML.\n\n")
@@ -35,11 +41,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  m4bon \"KE& M6/8 abc def\"\n")
 		fmt.Fprintf(os.Stderr, "  m4bon -f test/cases/basic-notes.dsl -o out.mxl\n")
 		fmt.Fprintf(os.Stderr, "  m4bon -render \"M4/4 c d e f\"\n")
+		fmt.Fprintf(os.Stderr, "  m4bon -tui\n")
+		fmt.Fprintf(os.Stderr, "  m4bon -tui -f score.dsl -bpm 96\n")
 	}
 	flag.Parse()
 
 	// Read DSL
 	var dsl string
+	var dslLabel string
 	if *inputFile != "" {
 		data, err := os.ReadFile(*inputFile)
 		if err != nil {
@@ -47,12 +56,25 @@ func main() {
 			os.Exit(1)
 		}
 		dsl = string(data)
+		dslLabel = *inputFile
 	} else if flag.NArg() > 0 {
 		dsl = strings.Join(flag.Args(), " ")
-	} else {
+		dslLabel = "arg"
+	} else if !*tuiFlag {
 		fmt.Fprintln(os.Stderr, "No DSL input provided")
 		flag.Usage()
 		os.Exit(1)
+	}
+
+	// TUI mode
+	if *tuiFlag {
+		dsl = musicxml.SanitizeDSL(dsl)
+		err := tui.Run(dsl, dslLabel, *bpmFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	dsl = musicxml.SanitizeDSL(dsl)

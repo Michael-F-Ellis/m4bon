@@ -12,14 +12,14 @@ const TicksPerWholeNote = 1920
 // Render produces the colorized text output for a sequence of measures.
 // Returns one line per measure with ANSI escape codes for colors.
 func Render(measures []parser.MeasureResult) string {
-	cellMeasures := buildCells(measures)
+	cellMeasures := BuildCells(measures)
 	return FormatANSI(cellMeasures)
 }
 
-// buildCells converts measures into the intermediate Cell representation,
+// BuildCells converts measures into the intermediate Cell representation,
 // one CellSeq per measure. The core rendering logic lives here — it is
 // independent of any output format (terminal, HTML, etc.).
-func buildCells(measures []parser.MeasureResult) []CellSeq {
+func BuildCells(measures []parser.MeasureResult) []CellSeq {
 	result := make([]CellSeq, 0, len(measures))
 	for mi, m := range measures {
 		cells := buildMeasureCells(m, mi+1)

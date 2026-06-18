@@ -1,0 +1,218 @@
+//go:build darwin && cgo
+
+package tui
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+var (
+	styleTopBar = lipgloss.NewStyle().
+			Background(lipgloss.Color("63")).
+			Foreground(lipgloss.Color("255")).
+			Padding(0, 1)
+
+	styleIndicator = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("46")).
+			Bold(true)
+
+	styleEndIndicator = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("245")).
+				Bold(true)
+
+	styleHelp = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+
+	styleMuted = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+)
+
+// topBar renders the top bar with time sig, key sig, tempo, volume.
+func (m *model) topBar() string {
+	var parts []string
+
+	// Time signature from first measure
+	if len(m.measures) > 0 {
+		parts = append(parts, fmt.Sprintf("M%d/%d", m.measures[0].TimeNum, m.measures[0].TimeDen))
+	}
+
+	// Key signature
+	if len(m.measures) > 0 {
+		f := m.measures[0].Fifths
+		if f > 0 {
+			parts = append(parts, fmt.Sprintf("K +%d (sharps)", f))
+		} else if f < 0 {
+			parts = append(parts, fmt.Sprintf("K %d (flats)", f))
+		} else {
+			parts = append(parts, "K C")
+		}
+	}
+
+	// Tempo
+	parts = append(parts, fmt.Sprintf("♩=%.0f", m.bpm))
+
+	// Volume
+	parts = append(parts, fmt.Sprintf("vol:%.0f%%", m.volume*100))
+
+	bar := strings.Join(parts, "  │  ")
+
+	// Truncate to fit width
+	if m.width > 0 && len(bar) > m.width-4 {
+		bar = bar[:m.width-7] + "..."
+	}
+
+	return styleTopBar.Render(" m4bon  │  " + bar)
+}
+
+// measureView renders the measure lines with indicator and scroll.
+// Lines already contain ANSI color codes from render.Render().
+func (m *model) measureView() string {
+	if len(m.renderLines) == 0 {
+		return styleMuted.Render("  No measures loaded.")
+	}
+
+	// Determine visible range
+	visible := m.height - 4 // top bar + status bar + padding
+	if visible < 1 {
+		visible = 5
+	}
+	if visible > len(m.renderLines) {
+		visible = len(m.renderLines)
+	}
+
+	// Center the current measure if possible
+	end := m.viewportStart + visible
+	if end > len(m.renderLines) {
+		end = len(m.renderLines)
+		m.viewportStart = end - visible
+	}
+	if m.viewportStart < 0 {
+		m.viewportStart = 0
+	}
+
+	var b strings.Builder
+	for i := m.viewportStart; i < end; i++ {
+		line := m.renderLines[i]
+		// Truncate to fit width
+		if m.width > 10 && len(line) > m.width-6 {
+			line = line[:m.width-9] + "..."
+		}
+
+		if i == m.startMeasure && i == m.endMeasure {
+			b.WriteString(styleIndicator.Render("▶"))
+			b.WriteString(styleEndIndicator.Render("▷"))
+		} else if i == m.startMeasure {
+			b.WriteString(styleIndicator.Render("▶ "))
+		} else if i == m.endMeasure {
+			b.WriteString(styleEndIndicator.Render(" ▷"))
+		} else {
+			b.WriteString("   ")
+		}
+
+		// Write raw line (already ANSI-colored from render.Render)
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+// statusBar renders the bottom status line.
+func (m *model) statusBar() string {
+	var transport string
+	switch {
+	case m.isRecording:
+		transport = "● REC"
+	case m.isPlaying:
+		transport = "▶ Playing"
+	default:
+		transport = "■ Stopped"
+	}
+
+	// Measure range
+	rangeInfo := fmt.Sprintf("Measures %d-%d", m.startMeasure+1, m.endMeasure+1)
+
+	// Elapsed time
+	elapsed := formatDuration(m.elapsed)
+	total := formatDuration(m.timeline.TotalDuration)
+	timeInfo := fmt.Sprintf("%s / %s", elapsed, total)
+
+	left := fmt.Sprintf("  %s  │  %s  │  %s", transport, rangeInfo, timeInfo)
+
+	// Pad to full width
+	if m.width > len(left) {
+		left = left + strings.Repeat(" ", m.width-len(left))
+	}
+
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("248")).
+		Render(left)
+}
+
+// helpView renders the help overlay.
+func (m *model) helpView() string {
+	helpText := `
+  Key Bindings:
+
+  space    Play / Pause
+  s        Stop
+  [ / ]    Tempo -5 / +5 BPM
+  { / }    Tempo -1 / +1 BPM
+  0        Reset tempo to 120
+  ↑ / ↓    Seek -1 / +1 measure (start ▷)
+  ⇧↑ / ⇧↓  End -1 / +1 measure (end ▷)
+  ← / →    Volume down / up
+  j / k    Scroll down / up
+  q        Quit
+  ?        Toggle this help
+`
+
+	return styleHelp.Render(helpText)
+}
+
+// View renders the complete TUI.
+func (m *model) View() string {
+	if m.quitting {
+		return ""
+	}
+
+	var b strings.Builder
+
+	// Top bar
+	titleWidth := m.width
+	if titleWidth <= 0 {
+		titleWidth = 80
+	}
+	m.width = titleWidth
+
+	b.WriteString(m.topBar())
+	b.WriteString("\n\n")
+
+	// Main content (measures or help)
+	if m.showHelp {
+		b.WriteString(m.helpView())
+	} else {
+		b.WriteString(m.measureView())
+	}
+
+	b.WriteString("\n")
+
+	// Bottom status bar
+	b.WriteString(m.statusBar())
+
+	return b.String()
+}
+
+// formatDuration formats a duration as mm:ss.d
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	totalSec := d.Seconds()
+	min := int(totalSec) / 60
+	sec := int(totalSec) % 60
+	dec := int((totalSec - float64(int(totalSec))) * 10)
+	return fmt.Sprintf("%02d:%02d.%d", min, sec, dec)
+}

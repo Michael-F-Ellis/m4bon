@@ -147,6 +147,9 @@ DSL text → stripDirectives (extract K, M) → sanitize → tokenize → parseG
 Usage: m4bon [options] [dsl]
   -f string    Read DSL from file
   -o string    Write MusicXML to file (default: stdout)
+  -render      Colorized text output
+  -tui         Launch interactive TUI performance/learning tool
+  -bpm float   Tempo in BPM for TUI mode (default 120)
 
 Time and key signatures are specified in the DSL via K... and M... directives:
   m4bon "M4/4 c d e f"
@@ -157,17 +160,34 @@ Examples:
   m4bon "M6/8 abc def"
   m4bon -f test/cases/basic-notes.dsl -o out.mxl
   m4bon -render "M4/4 c d e f"        # Colorized text output
+  m4bon -tui                          # Launch TUI (empty state)
+  m4bon -tui -f score.dsl -bpm 96     # TUI with file + custom tempo
 ```
 
 ---
 
+## MIDI Generation
+
+The `midi` package (macOS-only via `//go:build darwin && cgo`) provides:
+
+- `GenerateSMF(measures, bpm)` → `([]byte, Timeline, error)` — SMF bytes with score notes (ch1-3), metronome (ch10), and tempo map
+- `GenerateMetronomeOnly(measures, bpm)` → `([]byte, Timeline, error)` — Metronome-only SMF
+
+`Timeline` has `MeasureStarts []time.Duration`, `TotalDuration`, `TempoBPM`.
+
+## TUI Application
+
+Key bindings: space=play/pause, s=stop, [/]=tempo±5, {/}=tempo±1, 0=reset 120,
+↑/↓=volume, ←/→=seek measure, j/k=scroll, ?=help, q=quit. Lives in `cmd/m4bon/tui/`.
+
 ## Essential Commands
 
 ```bash
-go build -o m4bon ./cmd/m4bon/  # Build (0.5s)
+go build -o m4bon ./cmd/m4bon/  # Build (0.5s) — ALWAYS rebuild after changes
 go test ./...                    # Run all tests (0.4s)
 ./m4bon "c d e f"               # Quick test
-./notify.sh "message"           # Send iMessage notification to maintainer
+./m4bon -tui "c d e f"          # Launch TUI
+./notify.sh "message"           # Send iMessage notification
 ```
 
 ## Library Usage
@@ -175,10 +195,14 @@ go test ./...                    # Run all tests (0.4s)
 ```go
 import "github.com/mellis/m4bon"
 
-// Compile generates MusicXML. Render generates colorized text.
 xml, err := m4bon.Compile("M4/4 (c) (-e) (-g) | (-f) (d-) (b-) | (ce) - -")
-
 text, err := m4bon.Render("M4/4 c d e f")  // ANSI-escaped color text
+
+// MIDI generation (darwin+cgo only)
+import "github.com/mellis/m4bon/midi"
+import "github.com/mellis/m4bon/parser"
+measures := parser.ParseDSL("M4/4 c d e f")
+smfBytes, timeline, err := midi.GenerateSMF(measures.Measures, 120)
 ```
 
 ---

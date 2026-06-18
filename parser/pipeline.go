@@ -613,6 +613,42 @@ func deriveTimeSig(numBeats int, beat BeatDuration) (int, int) {
 	return numBeats * beat.Num, beat.Den
 }
 
+// fifthsToAccidentalMap builds a map from pitch letter to its key-signature accidental.
+// fifths: circle of fifths position (positive=sharps, negative=flats).
+func fifthsToAccidentalMap(fifths int) map[string]int {
+	m := make(map[string]int)
+	sharpOrder := []string{"f", "c", "g", "d", "a", "e", "b"}
+	flatOrder := []string{"b", "e", "a", "d", "g", "c", "f"}
+	if fifths > 0 {
+		for i := 0; i < fifths && i < len(sharpOrder); i++ {
+			m[sharpOrder[i]] = 1
+		}
+	} else if fifths < 0 {
+		for i := 0; i < -fifths && i < len(flatOrder); i++ {
+			m[flatOrder[i]] = -1
+		}
+	}
+	return m
+}
+
+// effectiveAccidental computes the accidental to use for pitch resolution:
+//   - If ExplicitNatural, use 0 (natural)
+//   - If explicit Accidental != 0, use that
+//   - Otherwise check the key signature
+//   - Default 0
+func effectiveAccidental(letter string, explicitAcc int, explicitNatural bool, keyAcc map[string]int) int {
+	if explicitNatural {
+		return 0
+	}
+	if explicitAcc != 0 {
+		return explicitAcc
+	}
+	if acc, ok := keyAcc[letter]; ok {
+		return acc
+	}
+	return 0
+}
+
 // --- Main parse entry point ---
 
 // ParseDSL parses m4bon DSL text into a sequence of measures.
@@ -880,6 +916,8 @@ func ParseDSL(text string) DSLResult {
 	lastPitch := make(map[int]int)
 	lastPitch[1] = 60 // default: voice 1 starts at C4
 	for mi := range measures {
+		// Build key signature accidental map for this measure
+		keyAcc := fifthsToAccidentalMap(measures[mi].Fifths)
 		for i := range measures[mi].Events {
 			ev := &measures[mi].Events[i]
 			if ev.Type == EventTupletStart || ev.Type == EventRest {
@@ -898,7 +936,8 @@ func ParseDSL(text string) DSLResult {
 			}
 
 			if ev.Type == EventNote {
-				ev.Midi = resolvePitch(ev.Letter, ev.Accidental, ev.OctaveShift, ref)
+				acc := effectiveAccidental(ev.Letter, ev.Accidental, ev.ExplicitNatural, keyAcc)
+				ev.Midi = resolvePitch(ev.Letter, acc, ev.OctaveShift, ref)
 				lastPitch[v] = ev.Midi
 			} else if ev.Type == EventChord {
 				// For split continuations (within same measure or across barline),
@@ -927,10 +966,11 @@ func ParseDSL(text string) DSLResult {
 				for p := range ev.Pitches {
 					pi := ev.Pitches[p]
 					var m int
+					acc := effectiveAccidental(pi.Letter, pi.Accidental, pi.ExplicitNatural, keyAcc)
 					if p == 0 {
-						m = resolvePitch(pi.Letter, pi.Accidental, pi.OctaveShift, chordRef)
+						m = resolvePitch(pi.Letter, acc, pi.OctaveShift, chordRef)
 					} else {
-						m = nextHigherPitch(pi.Letter, pi.Accidental, pi.OctaveShift, chordRef)
+						m = nextHigherPitch(pi.Letter, acc, pi.OctaveShift, chordRef)
 					}
 					ev.Midis = append(ev.Midis, m)
 					chordRef = m
