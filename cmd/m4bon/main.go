@@ -15,11 +15,13 @@ import (
 
 	"github.com/mellis/m4bon/musicxml"
 	"github.com/mellis/m4bon/parser"
+	"github.com/mellis/m4bon/render"
 )
 
 func main() {
 	inputFile := flag.String("f", "", "Read DSL from file instead of argument")
 	outputFile := flag.String("o", "", "Write MusicXML to file instead of stdout")
+	renderFlag := flag.Bool("render", false, "Output colorized text format instead of MusicXML")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: m4bon [options] [dsl]\n\n")
 		fmt.Fprintf(os.Stderr, "Convert m4bon beat-oriented DSL to MusicXML.\n\n")
@@ -32,6 +34,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  m4bon \"c d e f\"\n")
 		fmt.Fprintf(os.Stderr, "  m4bon \"KE& M6/8 abc def\"\n")
 		fmt.Fprintf(os.Stderr, "  m4bon -f test/cases/basic-notes.dsl -o out.mxl\n")
+		fmt.Fprintf(os.Stderr, "  m4bon -render \"M4/4 c d e f\"\n")
 	}
 	flag.Parse()
 
@@ -67,6 +70,19 @@ func main() {
 	if len(result.Measures) == 0 {
 		fmt.Fprintln(os.Stderr, "No events produced (empty DSL?)")
 		os.Exit(1)
+	}
+
+	if *renderFlag {
+		out := render.Render(result.Measures)
+		if *outputFile != "" {
+			if err := os.WriteFile(*outputFile, []byte(out), 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", *outputFile, err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Print(out)
+		}
+		return
 	}
 
 	xml, err := musicxml.Generate(result.Measures, result.Key.Fifths)

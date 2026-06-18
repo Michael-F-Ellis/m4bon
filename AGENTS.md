@@ -29,6 +29,11 @@ m4bon/
 │   └── parse_test.go        # Unit tests for parser
 ├── musicxml/
 │   └── xml.go               # MusicXML structs + generator
+├── render/
+│   ├── cell.go              # Cell IR types (StyleClass, Cell, CellSeq)
+│   ├── render.go            # Core renderer: buildCells, effective accidental
+│   ├── ansi.go              # ANSI terminal formatter
+│   └── render_test.go       # Unit tests for renderer
 ├── test/
 │   └── cases/               # .dsl + .expected.mxml test case files
 ├── lessons/
@@ -151,6 +156,7 @@ Examples:
   m4bon "c d e f"
   m4bon "M6/8 abc def"
   m4bon -f test/cases/basic-notes.dsl -o out.mxl
+  m4bon -render "M4/4 c d e f"        # Colorized text output
 ```
 
 ---
@@ -169,7 +175,11 @@ go test ./...                    # Run all tests (0.4s)
 ```go
 import "github.com/mellis/m4bon"
 
+// Compile generates MusicXML. Render generates colorized text.
 xml, err := m4bon.Compile("M4/4 (c) (-e) (-g) | (-f) (d-) (b-) | (ce) - -")
+
+text, err := m4bon.Render("M4/4 c d e f")  // ANSI-escaped color text
+```
 
 ---
 
@@ -184,9 +194,27 @@ xml, err := m4bon.Compile("M4/4 (c) (-e) (-g) | (-f) (d-) (b-) | (ce) - -")
 | 480 DPPQ | Standard MIDI convention; cleanly divides all required durations |
 | Events sorted by (tick, voice) in XML | MusicXML requires notes in onset order; multi-voice events interleave by tick then voice |
 | Greedy duration split + barline-aware split | Greedy for non-standard durations; fraction-based barline split (no ticks) runs first to respect the invisible-barline rule |
+| Two-layer render architecture | Core renderer produces `[]Cell` IR (color class, overline, subscript), formatters (ANSI, future HTML) convert independently |
 | No external XML libs | `encoding/xml` covers the subset we need |
 
 ---
+
+## Render Format
+
+When `-render` is set, each measure is output as one line:
+
+```
+1:  c₄ d e f
+2:  a₄ b c d
+```
+
+- **Colors**: sharp=red, flat=blue, dbl-sharp=orange, dbl-flat=green, sustains/rests=grey
+- **RGB values** match FQS: `rgb(209,34,34)`, `rgb(152,140,254)`, `rgb(255,165,0)`, `rgb(4,182,4)`, `rgb(160,160,160)`
+- **Octave subscripts**: shown on first pitch per measure, plus any pitch with `^`/`/`
+- **Chord parentheses + italic**: chords rendered as `(c₄eg)` with medium-dark grey parens and italic pitch letters
+- **Pure sustain groups**: each `-` beat rendered as a separate grey dash
+- **Accidentals**: key signature + explicit accidentals determine effective alteration and color; `%` correctly cancels key sig
+- **Beat-group grouping**: events from the same DSL beat group rendered without internal spaces
 
 ## Known Limitations
 
@@ -195,3 +223,6 @@ xml, err := m4bon.Compile("M4/4 (c) (-e) (-g) | (-f) (d-) (b-) | (ce) - -")
 - Voice-poly tuplet combinations not yet supported
 - Barline split covers 4/4 midpoint only — odd time sigs may need adjustment
 - Beaming may be incomplete for multi-voice measures (same-voice notes at non-adjacent sorted positions)
+- Render uses beat-group index grouping (GroupIdx on Event), not tick positions
+- Render `%` natural uses ExplicitNatural flag through Slot/ChordEntry/Pitch/Event
+- Render sustains via NumGroups field on MeasureResult (pure sustain groups produce no events)

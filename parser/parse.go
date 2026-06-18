@@ -21,28 +21,31 @@ const (
 )
 
 type Slot struct {
-	Type        SlotType
-	Letter      string
-	Accidental  int
-	OctaveShift int
-	Pitches     []Pitch     // for traditional chords (all notes, same voice)
-	Entries     []ChordEntry // for voice-poly chords (mix of notes/sustains/rests)
+	Type            SlotType
+	Letter          string
+	Accidental      int
+	OctaveShift     int
+	ExplicitNatural bool // % was used; overrides key signature
+	Pitches         []Pitch     // for traditional chords (all notes, same voice)
+	Entries         []ChordEntry // for voice-poly chords (mix of notes/sustains/rests)
 }
 
 type Pitch struct {
-	Letter      string
-	Accidental  int
-	OctaveShift int
+	Letter          string
+	Accidental      int
+	OctaveShift     int
+	ExplicitNatural bool // % was used; overrides key signature
 }
 
 // ChordEntry represents a single entry in a voice-poly chord (one voice's
 // contribution). A chord is voice-poly when any entry is a sustain or rest;
 // otherwise it's a traditional single-voice chord.
 type ChordEntry struct {
-	Type        SlotType
-	Letter      string
-	Accidental  int
-	OctaveShift int
+	Type            SlotType
+	Letter          string
+	Accidental      int
+	OctaveShift     int
+	ExplicitNatural bool // % was used; overrides key signature
 }
 
 type Fraction struct {
@@ -60,18 +63,20 @@ const (
 )
 
 type Event struct {
-	Type        EventType
-	Duration    Fraction
-	Nominal     *Fraction // for tuplet notes
-	Letter      string
-	Accidental  int
-	OctaveShift int
-	Pitches     []Pitch // for chords
-	Midi        int     // resolved pitch for single notes
-	Midis       []int   // resolved pitches for chords
-	Split       bool    // continuation from splitNonStandardDurations
-	TieNext     bool    // cross-measure tie to next measure's first note
-	Voice       int     // 0=default, 1,2,3 for voice-poly voices
+	Type            EventType
+	Duration        Fraction
+	Nominal         *Fraction // for tuplet notes
+	Letter          string
+	Accidental      int
+	OctaveShift     int
+	ExplicitNatural bool   // % was used; overrides key signature
+	Pitches         []Pitch // for chords
+	Midi            int     // resolved pitch for single notes
+	Midis           []int   // resolved pitches for chords
+	Split           bool    // continuation from splitNonStandardDurations
+	TieNext         bool    // cross-measure tie to next measure's first note
+	Voice           int     // 0=default, 1,2,3 for voice-poly voices
+	GroupIdx        int     // original beat-group index, for render grouping
 }
 
 // ParseResult holds the output of parsing a single beat group.
@@ -93,11 +98,12 @@ type DSLResult struct {
 
 // MeasureResult holds the parsed events and metadata for a single measure.
 type MeasureResult struct {
-	Events   []Event
-	TimeNum  int
-	TimeDen  int
-	Fifths   int
-	IsPickup bool
+	Events    []Event
+	TimeNum   int
+	TimeDen   int
+	Fifths    int
+	IsPickup  bool
+	NumGroups int // number of beat groups in the DSL input for this measure
 }
 
 // BeatDuration codes for B directive.
@@ -209,6 +215,8 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 	i := 0
 	acc := 0
 	pendingAcc := 0
+	natural := false
+	pendingNatural := false
 	oct := 0
 	pendingOct := 0
 	hasLetter := false
@@ -226,16 +234,18 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 				r := err("accidental/octave without pitch in chord", offset)
 				return &r
 			}
-			chordPitches = append(chordPitches, ChordEntry{Type: SlotNote, Letter: letter, Accidental: acc + pendingAcc, OctaveShift: oct + pendingOct})
+			chordPitches = append(chordPitches, ChordEntry{Type: SlotNote, Letter: letter, Accidental: acc + pendingAcc, OctaveShift: oct + pendingOct, ExplicitNatural: natural || pendingNatural})
 		} else {
 			if !hasLetter {
 				r := err("accidental/octave without pitch at end of group", offset)
 				return &r
 			}
-			slots = append(slots, Slot{Type: SlotNote, Letter: letter, Accidental: acc + pendingAcc, OctaveShift: oct + pendingOct})
+			slots = append(slots, Slot{Type: SlotNote, Letter: letter, Accidental: acc + pendingAcc, OctaveShift: oct + pendingOct, ExplicitNatural: natural || pendingNatural})
 		}
 		acc = 0
 		pendingAcc = 0
+		natural = false
+		pendingNatural = false
 		oct = 0
 		pendingOct = 0
 		hasLetter = false
@@ -284,8 +294,10 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 			if hasLetter {
 				// Natural: next note gets no accidental; current note is unaffected
 				pendingAcc = 0
+				pendingNatural = true
 			} else {
 				acc = 0
+				natural = true
 			}
 			i++
 			continue
@@ -387,7 +399,7 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 			} else {
 				pitches := make([]Pitch, len(chordPitches))
 				for i, e := range chordPitches {
-					pitches[i] = Pitch{Letter: e.Letter, Accidental: e.Accidental, OctaveShift: e.OctaveShift}
+					pitches[i] = Pitch{Letter: e.Letter, Accidental: e.Accidental, OctaveShift: e.OctaveShift, ExplicitNatural: e.ExplicitNatural}
 				}
 				slots = append(slots, Slot{Type: SlotChord, Pitches: pitches})
 			}
@@ -405,13 +417,16 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 				// Save pending values for the new note, emit without them, then transfer.
 				nextAcc := pendingAcc
 				nextOct := pendingOct
+				nextNat := pendingNatural
 				pendingAcc = 0
 				pendingOct = 0
+				pendingNatural = false
 				if r := emitNote(i); r != nil {
 					return *r
 				}
 				acc = nextAcc
 				oct = nextOct
+				natural = nextNat
 			}
 			letter = lower
 			hasLetter = true

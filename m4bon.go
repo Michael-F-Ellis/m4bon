@@ -14,6 +14,7 @@ import (
 
 	"github.com/mellis/m4bon/musicxml"
 	"github.com/mellis/m4bon/parser"
+	"github.com/mellis/m4bon/render"
 )
 
 // Compile parses m4bon DSL text and returns the MusicXML output as a string.
@@ -31,4 +32,22 @@ func Compile(dsl string) (string, error) {
 		return "", fmt.Errorf("no events produced")
 	}
 	return musicxml.Generate(result.Measures, result.Key.Fifths)
+}
+
+// Render parses m4bon DSL text and returns colorized text output
+// in the FQS-inspired format: one measure per line with colored
+// accidentals, octave subscripts, and chord overlines.
+func Render(dsl string) (string, error) {
+	dsl = musicxml.SanitizeDSL(dsl)
+	if dsl == "" {
+		return "", fmt.Errorf("empty DSL after sanitization")
+	}
+	result := parser.ParseDSL(dsl)
+	if result.Err != nil {
+		return "", result.Err
+	}
+	if len(result.Measures) == 0 {
+		return "", fmt.Errorf("no events produced")
+	}
+	return render.Render(result.Measures), nil
 }

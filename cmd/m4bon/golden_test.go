@@ -23,6 +23,9 @@ func TestGoldenFiles(t *testing.T) {
 
 	for _, dslPath := range matches {
 		name := filepath.Base(dslPath)
+		if strings.HasPrefix(name, "render-") {
+			continue // render test cases have their own golden test
+		}
 		base := strings.TrimSuffix(name, ".dsl")
 		expectedPath := filepath.Join(root, "test/cases", base+".expected.mxml")
 
