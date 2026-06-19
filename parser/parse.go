@@ -63,20 +63,112 @@ const (
 )
 
 type Event struct {
-	Type            EventType
-	Duration        Fraction
-	Nominal         *Fraction // for tuplet notes
-	Letter          string
-	Accidental      int
-	OctaveShift     int
-	ExplicitNatural bool   // % was used; overrides key signature
-	Pitches         []Pitch // for chords
-	Midi            int     // resolved pitch for single notes
-	Midis           []int   // resolved pitches for chords
-	Split           bool    // continuation from splitNonStandardDurations
-	TieNext         bool    // cross-measure tie to next measure's first note
-	Voice           int     // 0=default, 1,2,3 for voice-poly voices
-	GroupIdx        int     // original beat-group index, for render grouping
+	Type              EventType
+	Duration          Fraction
+	Nominal           *Fraction // for tuplet notes: the nominal (display) duration
+	Letter            string    // EventNote only
+	Accidental        int       // EventNote only
+	OctaveShift       int       // EventNote only
+	ExplicitNatural   bool      // EventNote only; % was used; overrides key signature
+	Pitches           []Pitch   // EventChord only
+	Midi              int       // EventNote only; resolved MIDI pitch
+	Midis             []int     // EventChord only; resolved MIDI pitches
+	Split             bool      // continuation from splitNonStandardDurations or barline split
+	TieNext           bool      // cross-measure tie to next measure's first note
+	Voice             int       // 1-based voice number (1,2,3 for voice-poly)
+	GroupIdx          int       // original beat-group index, for render grouping
+	TupletActualNotes int       // EventTupletStart only
+	TupletNormalNotes int       // EventTupletStart only
+}
+
+// NewNoteEvent creates a single-note event with the appropriate fields set.
+func NewNoteEvent(letter string, accidental, octaveShift int, explicitNatural bool, dur Fraction, nominal *Fraction, voice, groupIdx int) Event {
+	return Event{
+		Type:            EventNote,
+		Duration:        dur,
+		Nominal:         nominal,
+		Letter:          letter,
+		Accidental:      accidental,
+		OctaveShift:     octaveShift,
+		ExplicitNatural: explicitNatural,
+		Voice:           voice,
+		GroupIdx:        groupIdx,
+	}
+}
+
+// NewChordEvent creates a chord event with the given pitches.
+func NewChordEvent(pitches []Pitch, dur Fraction, nominal *Fraction, voice, groupIdx int) Event {
+	return Event{
+		Type:     EventChord,
+		Duration: dur,
+		Nominal:  nominal,
+		Pitches:  pitches,
+		Voice:    voice,
+		GroupIdx: groupIdx,
+	}
+}
+
+// NewRestEvent creates a rest event.
+func NewRestEvent(dur Fraction, nominal *Fraction, voice, groupIdx int) Event {
+	return Event{
+		Type:     EventRest,
+		Duration: dur,
+		Nominal:  nominal,
+		Voice:    voice,
+		GroupIdx: groupIdx,
+	}
+}
+
+// NewTupletStartEvent creates a tuplet bracket marker.
+func NewTupletStartEvent(dur Fraction, groupIdx int, actualNotes, normalNotes int) Event {
+	return Event{
+		Type:              EventTupletStart,
+		Duration:          dur,
+		GroupIdx:          groupIdx,
+		TupletActualNotes: actualNotes,
+		TupletNormalNotes: normalNotes,
+		Voice:             1,
+	}
+}
+
+// Validate checks that the Event's fields are consistent with its Type.
+func (e Event) Validate() error {
+	switch e.Type {
+	case EventNote:
+		if e.Letter == "" {
+			return fmt.Errorf("EventNote with empty Letter")
+		}
+		if e.Midi < 0 || e.Midi > 127 {
+			return fmt.Errorf("EventNote Midi out of range: %d", e.Midi)
+		}
+		if len(e.Pitches) > 0 || len(e.Midis) > 0 {
+			return fmt.Errorf("EventNote has Pitches or Midis set")
+		}
+	case EventChord:
+		if len(e.Pitches) == 0 {
+			return fmt.Errorf("EventChord with no Pitches")
+		}
+		if e.Letter != "" || e.Midi != 0 {
+			return fmt.Errorf("EventChord has Letter or Midi set")
+		}
+	case EventRest:
+		if e.Letter != "" || e.Pitches != nil || e.Midi != 0 {
+			return fmt.Errorf("EventRest has note-related fields set")
+		}
+	case EventTupletStart:
+		if e.Duration.Num <= 0 {
+			return fmt.Errorf("EventTupletStart with non-positive duration")
+		}
+	default:
+		return fmt.Errorf("unknown EventType: %s", e.Type)
+	}
+	if e.Voice < 0 {
+		return fmt.Errorf("negative Voice: %d", e.Voice)
+	}
+	if e.GroupIdx < 0 {
+		return fmt.Errorf("negative GroupIdx: %d", e.GroupIdx)
+	}
+	return nil
 }
 
 // ParseResult holds the output of parsing a single beat group.

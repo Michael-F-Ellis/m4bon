@@ -248,5 +248,5 @@ When `-render` is set, each measure is output as one line:
 - Barline split covers 4/4 midpoint only — odd time sigs may need adjustment
 - Beaming may be incomplete for multi-voice measures (same-voice notes at non-adjacent sorted positions)
 - Render uses beat-group index grouping (GroupIdx on Event), not tick positions
-- Render `%` natural uses ExplicitNatural flag through Slot/ChordEntry/Pitch/Event
-- Render sustains via NumGroups field on MeasureResult (pure sustain groups produce no events)
+- Cross-measure sustain for voice-poly is fragile: `priorEvents[1]` hard-coded in legacy sustain path (pipeline.go lines 68, 152). When a voice-poly chord follows a traditional chord (e.g. `(c d e) | (- - g)`), the individual pitches of the traditional chord must be findable through the voice 1 prior event. Sustain-after-rest semantics (e.g. `(c ; e) | (- ; g)`) require nil-sentinel handling — a rest establishes the voice but doesn't provide a pitch to extend.
+- `encoding/xml` produces `<chord>true</chord>` instead of spec-conformant `<chord/>`. Most renderers accept this.

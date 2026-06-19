@@ -359,15 +359,12 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 		beatTicks := DPPQ * 4 / meas.TimeDen * meas.TimeNum
 
 		for i, ev := range meas.Events {
-			// Map event voice to MusicXML voice (1-based, 0→1)
+			// Map event voice to MusicXML voice (1-based)
 			voice := ev.Voice
-			if voice < 1 {
-				voice = 1
-			}
 
 			if ev.Type == parser.EventTupletStart {
-				tupletRatioNum = ev.Midi
-				tupletRatioDen = ev.OctaveShift
+				tupletRatioNum = ev.TupletActualNotes
+				tupletRatioDen = ev.TupletNormalNotes
 				continue
 			}
 

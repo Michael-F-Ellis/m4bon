@@ -41,13 +41,8 @@ func ResolveBeatDuration(num, den int) BeatDuration {
 	return BeatDuration{Num: z, Den: n}
 }
 
-func resolveDurations(groups []ParseResult, beat BeatDuration) ([]Event, error) {
-	return resolveDurationsWithPrior(groups, beat, nil)
-}
-
-// resolveDurationsWithPrior is like resolveDurations but accepts an optional
-// map of per-voice prior events for cross-measure sustain ties. Voice 0 is
-// the fallback for the legacy single-voice behavior.
+// resolveDurationsWithPrior resolves beat groups into events, accepting an optional
+// map of per-voice prior events for cross-measure sustain ties.
 func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEvents map[int]*Event) ([]Event, error) {
 	var events []Event
 	voiceLastIdx := make(map[int]int) // per-voice last event index for sustain extension
@@ -67,10 +62,10 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 		// Sustain-only group (all positions are sustains)
 		if activeCount == 0 && len(group.Slots) > 0 {
 			if len(events) == 0 {
-				// Cross-measure sustain: use priorEvent[0] as fallback
+				// Cross-measure sustain: use prior event for voice 1
 				var pe *Event
 				if priorEvents != nil {
-					pe = priorEvents[0]
+					pe = priorEvents[1]
 				}
 				if pe == nil || (pe.Type != EventNote && pe.Type != EventChord) {
 					return nil, fmt.Errorf("sustain with no prior note")
@@ -141,14 +136,10 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 			nomDen /= ng
 
 			tg := gcd(totalNum, totalDen)
-			events = append(events, Event{
-				Type:     EventTupletStart,
-				Duration: Fraction{Num: totalNum / tg, Den: totalDen / tg},
-			})
-			// Store tuplet ratio in the dummy event — we encode it in the
-			// next notes' time-modification in the MusicXML layer.
-			events[len(events)-1].Midi = ratioNum      // temporary: actual-notes
-			events[len(events)-1].OctaveShift = ratioDen // temporary: normal-notes
+			events = append(events, NewTupletStartEvent(
+				Fraction{Num: totalNum / tg, Den: totalDen / tg},
+				gi, ratioNum, ratioDen,
+			))
 		}
 
 		for s := 0; s < posCount; s++ {
@@ -158,7 +149,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 					// Cross-measure sustain within a mixed group
 					var pe *Event
 					if priorEvents != nil {
-						pe = priorEvents[0]
+						pe = priorEvents[1]
 					}
 					if pe == nil || (pe.Type != EventNote && pe.Type != EventChord) {
 						return nil, fmt.Errorf("sustain with no prior note across groups")
@@ -404,6 +395,19 @@ var standardDurations = []Fraction{
 	{1, 2}, {1, 4}, {1, 8}, {1, 16}, {1, 32}, {1, 64}, {1, 128},
 }
 
+// lessThanFraction returns true if a < b using cross-multiplication (no float).
+func lessThanFraction(a, b Fraction) bool {
+	return a.Num*b.Den < b.Num*a.Den
+}
+
+// subtractFraction returns a - b reduced to lowest terms. Assumes a >= b.
+func subtractFraction(a, b Fraction) Fraction {
+	num := a.Num*b.Den - b.Num*a.Den
+	den := a.Den * b.Den
+	g := gcd(num, den)
+	return Fraction{Num: num / g, Den: den / g}
+}
+
 func splitNonStandardDurations(events []Event) []Event {
 	var result []Event
 	for _, ev := range events {
@@ -420,12 +424,12 @@ func splitNonStandardDurations(events []Event) []Event {
 			continue
 		}
 
-		remains := float64(dur.Num) / float64(dur.Den)
+		remains := Fraction{Num: dur.Num, Den: dur.Den}
 		first := true
-		for remains > 0.00001 {
+		for remains.Num > 0 {
+			matched := false
 			for _, sd := range standardDurations {
-				sv := float64(sd.Num) / float64(sd.Den)
-				if remains >= sv-0.00001 {
+				if !lessThanFraction(remains, sd) { // remains >= sd
 					ne := ev
 					ne.Duration = sd
 					if ev.Nominal != nil {
@@ -433,10 +437,15 @@ func splitNonStandardDurations(events []Event) []Event {
 					}
 					ne.Split = !first
 					result = append(result, ne)
-					remains -= sv
+					remains = subtractFraction(remains, sd)
 					first = false
+					matched = true
 					break
 				}
+			}
+			if !matched {
+				// Safety: no standard duration fits — shouldn't happen since input is non-standard
+				break
 			}
 		}
 	}
@@ -651,26 +660,26 @@ func effectiveAccidental(letter string, explicitAcc int, explicitNatural bool, k
 
 // --- Main parse entry point ---
 
-// ParseDSL parses m4bon DSL text into a sequence of measures.
-// Key signature (K...), meter (M...), and beat duration (B...) directives
-// are parsed from the DSL itself. Defaults: C major, 4/4.
-// Measures are separated by |. Each measure can have its own directives.
-func ParseDSL(text string) DSLResult {
-	text, fifths, timeNum, timeDen, hasInitialMeter := stripDirectives(text)
-	tokens := tokenize(text)
-	if len(tokens) == 0 {
-		return DSLResult{Err: fmt.Errorf("no input")}
-	}
+// measureDirectives holds parsed K, M, B directives for a single measure.
+type measureDirectives struct {
+	fifths        int
+	timeNum       int
+	timeDen       int
+	beat          BeatDuration
+	beatTokens    []Token
+	explicitMeter bool // true if this measure has its own M directive
+	hasBeatCode   bool // true if B directive was found
+}
 
-	// Split tokens at | boundaries
-	var measureTokenGroups [][]Token
+// splitMeasures splits tokens at | boundaries into measure groups.
+// Returns the groups and whether any barline was found.
+func splitMeasures(tokens []Token) (groups [][]Token, hasBarline bool) {
 	var curGroup []Token
-	hasBarline := false
 	for _, tok := range tokens {
 		if tok.Raw == "|" {
 			hasBarline = true
 			if len(curGroup) > 0 {
-				measureTokenGroups = append(measureTokenGroups, curGroup)
+				groups = append(groups, curGroup)
 				curGroup = nil
 			}
 			continue
@@ -678,245 +687,175 @@ func ParseDSL(text string) DSLResult {
 		curGroup = append(curGroup, tok)
 	}
 	if len(curGroup) > 0 {
-		measureTokenGroups = append(measureTokenGroups, curGroup)
+		groups = append(groups, curGroup)
 	}
-
 	// If no | separators, treat everything as one measure
-	if len(measureTokenGroups) == 0 {
-		measureTokenGroups = [][]Token{tokens}
+	if len(groups) == 0 {
+		groups = [][]Token{tokens}
 	}
+	return
+}
 
-	currentFifths := fifths
-	currentTimeNum := timeNum
-	currentTimeDen := timeDen
-	var measures []MeasureResult
-	var errs []string
-	lastMeasureHadNote := false
+// scanMeasureDirectives scans tokens for K, M, B directives and returns
+// the parsed directives along with the remaining beat tokens.
+func scanMeasureDirectives(tokens []Token, defaultFifths, defaultTimeNum, defaultTimeDen int) measureDirectives {
+	var md measureDirectives
+	md.fifths = defaultFifths
+	md.timeNum = defaultTimeNum
+	md.timeDen = defaultTimeDen
 
-	for mi, group := range measureTokenGroups {
-		// Scan tokens for directives
-		var beatTokens []Token
-		mFifths := currentFifths
-		mTimeNum := 0
-		mTimeDen := 0
-		beatCode := ""
-
-		for _, tok := range group {
-			raw := tok.Raw
-			// Tokens are lowercased by tokenizer, so check lowercase prefixes
-			if strings.HasPrefix(raw, "k") && len(raw) > 1 {
-				body := raw[1:] // already lowercased
-				canon := canonicalKey(body)
-				if f, ok := keySigMap[canon]; ok {
-					mFifths = f
-				}
-				continue
-			}
-			if strings.HasPrefix(raw, "m") && len(raw) > 1 {
-				body := raw[1:]
-				if n, err := fmt.Sscanf(body, "%d/%d", &mTimeNum, &mTimeDen); err == nil && n == 2 {
-					// parsed OK
-				}
-				continue
-			}
-			if strings.HasPrefix(raw, "b") && len(raw) > 1 {
-				beatCode = strings.ToUpper(raw[1:])
-				continue
-			}
-			beatTokens = append(beatTokens, tok)
-		}
-
-		// Determine effective time sig and beat for this measure
-		effectiveTimeNum := currentTimeNum
-		effectiveTimeDen := currentTimeDen
-
-		if mTimeNum > 0 {
-			effectiveTimeNum = mTimeNum
-			effectiveTimeDen = mTimeDen
-		}
-
-		var beat BeatDuration
-		if beatCode != "" {
-			if bd, ok := BeatDurationCodes[beatCode]; ok {
-				beat = bd
-			} else {
-				beat = BeatDuration{1, 4} // fallback
-			}
-			// Derive time sig from content if no explicit M
-			if mTimeNum == 0 {
-				effectiveTimeNum, effectiveTimeDen = deriveTimeSig(len(beatTokens), beat)
-			}
-		} else {
-			beat = ResolveBeatDuration(effectiveTimeNum, effectiveTimeDen)
-		}
-
-		// Parse beat groups — priorPitch carries across measures for sustain ties
-		priorPitch := lastMeasureHadNote
-		numGroups := len(beatTokens)
-		var groups []ParseResult
-		for _, tok := range beatTokens {
-			result := parseGroup(tok.Raw, priorPitch)
-			if result.Err != nil {
-				errs = append(errs, fmt.Sprintf("Measure %d: group '%s': %v", mi+1, tok.Raw, result.Err))
-				if len(errs) >= 10 {
-					break
-				}
-				continue
-			}
-			for s := len(result.Slots) - 1; s >= 0; s-- {
-				if result.Slots[s].Type == SlotNote || result.Slots[s].Type == SlotChord {
-					priorPitch = true
-					break
-				}
-				if result.Slots[s].Type == SlotRest {
-					priorPitch = false
-					break
-				}
-			}
-			groups = append(groups, result)
-		}
-
-		if len(errs) >= 10 {
-			break
-		}
-
-		// Build per-voice prior events for cross-measure sustain
-		priorEvents := make(map[int]*Event)
-		if len(measures) > 0 {
-			prevEvents := measures[len(measures)-1].Events
-			for i := len(prevEvents) - 1; i >= 0; i-- {
-				ev := &prevEvents[i]
-				if ev.Type == EventNote || ev.Type == EventChord {
-					v := ev.Voice
-					if _, ok := priorEvents[v]; !ok {
-						priorEvents[v] = ev
-					}
-				}
-			}
-			// Ensure legacy fallback (voice 0) is always present
-			if _, ok := priorEvents[0]; !ok {
-				if _, ok := priorEvents[1]; ok {
-					priorEvents[0] = priorEvents[1]
-				}
-			}
-		}
-
-		// Resolve durations
-		events, err := resolveDurationsWithPrior(groups, beat, priorEvents)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("Measure %d: %v", mi+1, err))
-			if len(errs) >= 10 {
-				break
+	for _, tok := range tokens {
+		raw := tok.Raw
+		if strings.HasPrefix(raw, "k") && len(raw) > 1 {
+			body := raw[1:]
+			canon := canonicalKey(body)
+			if f, ok := keySigMap[canon]; ok {
+				md.fifths = f
 			}
 			continue
 		}
-
-		// If the first event is a cross-measure sustain (Split && !Nominal continuation),
-		// mark the previous measure's last note of the same voice for tie-start
-		if len(events) > 0 && events[0].Split && len(measures) > 0 {
-			sustainVoice := events[0].Voice
-			if sustainVoice == 0 {
-				sustainVoice = 1
+		if strings.HasPrefix(raw, "m") && len(raw) > 1 {
+			body := raw[1:]
+			if n, err := fmt.Sscanf(body, "%d/%d", &md.timeNum, &md.timeDen); err == nil && n == 2 {
+				md.explicitMeter = true
 			}
-			prevMeas := &measures[len(measures)-1]
-			for i := len(prevMeas.Events) - 1; i >= 0; i-- {
-				ev := &prevMeas.Events[i]
-				evVoice := ev.Voice
-				if evVoice == 0 {
-					evVoice = 1
-				}
-				if (ev.Type == EventNote || ev.Type == EventChord) && evVoice == sustainVoice {
-					ev.TieNext = true
-					break
-				}
-			}
+			continue
 		}
-
-		// Auto-detect time sig from resolved content when no explicit directive
-		// and content doesn't fill the inherited meter. Only in multi-measure mode.
-		if mTimeNum == 0 && beatCode == "" && hasBarline && !(mi == 0 && hasInitialMeter) {
-			actualTicks := totalTicks(events)
-			expectedTicks := timeSigTicks(effectiveTimeNum, effectiveTimeDen)
-			if actualTicks != expectedTicks && actualTicks > 0 {
-				g := gcd(actualTicks, TicksPerWholeNote)
-				effectiveTimeNum = actualTicks / g
-				effectiveTimeDen = TicksPerWholeNote / g
+		if strings.HasPrefix(raw, "b") && len(raw) > 1 {
+			md.hasBeatCode = true
+			bc := strings.ToUpper(raw[1:])
+			if bd, ok := BeatDurationCodes[bc]; ok {
+				md.beat = bd
+			} else {
+				md.beat = BeatDuration{1, 4} // fallback
 			}
+			continue
 		}
+		md.beatTokens = append(md.beatTokens, tok)
+	}
 
-		// Validate against explicit M directive
-		// Only validate when there's an explicit M directive and the content
-		// doesn't fill the measure. Skip for pickup measures (first measure of
-		// multi-group input that's shorter than expected).
-		hasSecondMeasure := len(measureTokenGroups) > 1
-		hasExplicitMeter := (mi == 0 && hasInitialMeter && hasBarline) || mTimeNum > 0
-		if hasExplicitMeter {
-			expectedTicks := timeSigTicks(effectiveTimeNum, effectiveTimeDen)
-			actualTicks := totalTicks(events)
-			if actualTicks != expectedTicks {
-				// Skip error for potential pickup (first measure, shorter, has second measure)
-				if mi == 0 && hasSecondMeasure && actualTicks < expectedTicks {
-					// will be handled by pickup detection below
-				} else {
-					var inputBuilder strings.Builder
-					for _, tok := range group {
-						if inputBuilder.Len() > 0 {
-							inputBuilder.WriteString(" ")
-						}
-						inputBuilder.WriteString(tok.Raw)
-					}
-					errs = append(errs, fmt.Sprintf("Measure %d: expected %d/%d (%d ticks), got %d ticks\n  Input: %q\n  Suggestion: check beat grouping", mi+1, effectiveTimeNum, effectiveTimeDen, expectedTicks, actualTicks, inputBuilder.String()))
-					if len(errs) >= 10 {
-						break
-					}
-				}
+	// Derive time sig from beat when no explicit M but B directive present
+	if md.hasBeatCode && !md.explicitMeter {
+		md.timeNum, md.timeDen = deriveTimeSig(len(md.beatTokens), md.beat)
+	}
+
+	return md
+}
+
+// parseBeatTokens parses each beat-group token into a ParseResult.
+func parseBeatTokens(tokens []Token, priorPitch bool) (groups []ParseResult, numGroups int, errs []string) {
+	numGroups = len(tokens)
+	for _, tok := range tokens {
+		result := parseGroup(tok.Raw, priorPitch)
+		if result.Err != nil {
+			errs = append(errs, fmt.Sprintf("group '%s': %v", tok.Raw, result.Err))
+			if len(errs) >= 10 {
+				return
 			}
+			continue
 		}
-
-		// Split at barline (with this measure's time sig)
-		events = splitAtBarline(events, effectiveTimeNum, effectiveTimeDen)
-
-		// Split non-standard durations
-		events = splitNonStandardDurations(events)
-
-		// Pickup detection (only for first measure when there are multiple measures)
-		isPickup := false
-		if mi == 0 && hasSecondMeasure {
-			capacity := timeSigTicks(effectiveTimeNum, effectiveTimeDen)
-			actualTicks := totalTicks(events)
-			if actualTicks < capacity {
-				isPickup = true
+		for s := len(result.Slots) - 1; s >= 0; s-- {
+			if result.Slots[s].Type == SlotNote || result.Slots[s].Type == SlotChord {
+				priorPitch = true
+				break
 			}
-		}
-
-		measures = append(measures, MeasureResult{
-			Events:    events,
-			TimeNum:   effectiveTimeNum,
-			TimeDen:   effectiveTimeDen,
-			Fifths:    mFifths,
-			IsPickup:  isPickup,
-			NumGroups: numGroups,
-		})
-
-		// Track whether this measure had any note/chord for cross-measure sustain
-		lastMeasureHadNote = false
-		for _, ev := range events {
-			if ev.Type == EventNote || ev.Type == EventChord {
-				lastMeasureHadNote = true
+			if result.Slots[s].Type == SlotRest {
+				priorPitch = false
 				break
 			}
 		}
-
-		currentFifths = mFifths
-		currentTimeNum = effectiveTimeNum
-		currentTimeDen = effectiveTimeDen
+		groups = append(groups, result)
 	}
+	return
+}
 
-	// Resolve octaves across all measures — per-voice reference tracking
+// buildPriorEvents builds a per-voice prior-event map from the last measure
+// for cross-measure sustain resolution.
+func buildPriorEvents(measures []MeasureResult) map[int]*Event {
+	priorEvents := make(map[int]*Event)
+	if len(measures) == 0 {
+		return priorEvents
+	}
+	prevEvents := measures[len(measures)-1].Events
+	for i := len(prevEvents) - 1; i >= 0; i-- {
+		ev := &prevEvents[i]
+		if ev.Type == EventNote || ev.Type == EventChord {
+			if _, ok := priorEvents[ev.Voice]; !ok {
+				priorEvents[ev.Voice] = ev
+			}
+		}
+	}
+	return priorEvents
+}
+
+// markCrossMeasureTies finds a cross-measure sustain at the start of events
+// and marks the previous measure's corresponding note with TieNext.
+func markCrossMeasureTies(events []Event, measures []MeasureResult) {
+	if len(events) == 0 || !events[0].Split || len(measures) == 0 {
+		return
+	}
+	sustainVoice := events[0].Voice
+	prevMeas := &measures[len(measures)-1]
+	for i := len(prevMeas.Events) - 1; i >= 0; i-- {
+		ev := &prevMeas.Events[i]
+		if (ev.Type == EventNote || ev.Type == EventChord) && ev.Voice == sustainVoice {
+			ev.TieNext = true
+			break
+		}
+	}
+}
+
+// measureHasNote returns true if any event in the slice is a note or chord.
+func measureHasNote(events []Event) bool {
+	for _, ev := range events {
+		if ev.Type == EventNote || ev.Type == EventChord {
+			return true
+		}
+	}
+	return false
+}
+
+// validateExplicitMeter checks that events fill the expected measure duration.
+// Returns a formatted error string, or empty string if valid.
+func validateExplicitMeter(events []Event, timeNum, timeDen int, tokens []Token, measureIdx int, hasSecondMeasure, hasExplicitMeter, isFirstMeasure bool) string {
+	if !hasExplicitMeter {
+		return ""
+	}
+	expectedTicks := timeSigTicks(timeNum, timeDen)
+	actualTicks := totalTicks(events)
+	if actualTicks == expectedTicks {
+		return ""
+	}
+	// Allow pickup (first measure, shorter, has second measure)
+	if isFirstMeasure && hasSecondMeasure && actualTicks < expectedTicks {
+		return ""
+	}
+	var inputBuilder strings.Builder
+	for _, tok := range tokens {
+		if inputBuilder.Len() > 0 {
+			inputBuilder.WriteString(" ")
+		}
+		inputBuilder.WriteString(tok.Raw)
+	}
+	return fmt.Sprintf("Measure %d: expected %d/%d (%d ticks), got %d ticks\n  Input: %q\n  Suggestion: check beat grouping", measureIdx+1, timeNum, timeDen, expectedTicks, actualTicks, inputBuilder.String())
+}
+
+// detectPickup returns true if the first measure in a multi-measure input
+// is shorter than the time signature capacity.
+func detectPickup(events []Event, timeNum, timeDen int, measureIdx int, hasSecondMeasure bool) bool {
+	if measureIdx != 0 || !hasSecondMeasure {
+		return false
+	}
+	capacity := timeSigTicks(timeNum, timeDen)
+	return totalTicks(events) < capacity
+}
+
+// resolveOctavesMeasures resolves MIDI pitch numbers for all events across all measures,
+// using per-voice reference tracking (Lilypond "closest interval" rule).
+func resolveOctavesMeasures(measures []MeasureResult) {
 	lastPitch := make(map[int]int)
 	lastPitch[1] = 60 // default: voice 1 starts at C4
 	for mi := range measures {
-		// Build key signature accidental map for this measure
 		keyAcc := fifthsToAccidentalMap(measures[mi].Fifths)
 		for i := range measures[mi].Events {
 			ev := &measures[mi].Events[i]
@@ -924,11 +863,7 @@ func ParseDSL(text string) DSLResult {
 				continue
 			}
 
-			// Determine which voice this event belongs to
 			v := ev.Voice
-			if v == 0 {
-				v = 1 // Map voice 0 → voice 1 for reference tracking
-			}
 			ref, ok := lastPitch[v]
 			if !ok {
 				ref = 60
@@ -940,15 +875,11 @@ func ParseDSL(text string) DSLResult {
 				ev.Midi = resolvePitch(ev.Letter, acc, ev.OctaveShift, ref)
 				lastPitch[v] = ev.Midi
 			} else if ev.Type == EventChord {
-				// For split continuations (within same measure or across barline),
-				// copy MIDI from the predecessor so tied chord fragments keep
-				// the same voicing.
 				if ev.Split {
 					var prev Event
 					if i > 0 && measures[mi].Events[i-1].Type == EventChord {
 						prev = measures[mi].Events[i-1]
 					} else if mi > 0 {
-						// Cross-measure split: look at previous measure's last chord
 						for j := len(measures[mi-1].Events) - 1; j >= 0; j-- {
 							if measures[mi-1].Events[j].Type == EventChord {
 								prev = measures[mi-1].Events[j]
@@ -979,6 +910,112 @@ func ParseDSL(text string) DSLResult {
 			}
 		}
 	}
+}
+
+// ParseDSL parses m4bon DSL text into a sequence of measures.
+// Key signature (K...), meter (M...), and beat duration (B...) directives
+// are parsed from the DSL itself. Defaults: C major, 4/4.
+// Measures are separated by |. Each measure can have its own directives.
+func ParseDSL(text string) DSLResult {
+	text, fifths, timeNum, timeDen, hasInitialMeter := stripDirectives(text)
+	tokens := tokenize(text)
+	if len(tokens) == 0 {
+		return DSLResult{Err: fmt.Errorf("no input")}
+	}
+
+	measureTokenGroups, hasBarline := splitMeasures(tokens)
+
+	currentFifths := fifths
+	currentTimeNum := timeNum
+	currentTimeDen := timeDen
+	var measures []MeasureResult
+	var errs []string
+	lastMeasureHadNote := false
+
+	for mi, group := range measureTokenGroups {
+		hasSecondMeasure := len(measureTokenGroups) > 1
+
+		// Scan directives from tokens
+		md := scanMeasureDirectives(group, currentFifths, currentTimeNum, currentTimeDen)
+
+		// Override defaults if explicit M found
+		effectiveTimeNum := md.timeNum
+		effectiveTimeDen := md.timeDen
+
+		// Resolve beat if no B directive
+		if !md.hasBeatCode {
+			md.beat = ResolveBeatDuration(effectiveTimeNum, effectiveTimeDen)
+		}
+
+		// Parse beat groups
+		groups, numGroups, groupErrs := parseBeatTokens(md.beatTokens, lastMeasureHadNote)
+		for _, ge := range groupErrs {
+			errs = append(errs, fmt.Sprintf("Measure %d: %s", mi+1, ge))
+		}
+		if len(errs) >= 10 {
+			break
+		}
+
+		// Build prior events for cross-measure sustain
+		priorEvents := buildPriorEvents(measures)
+
+		// Resolve durations
+		events, err := resolveDurationsWithPrior(groups, md.beat, priorEvents)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("Measure %d: %v", mi+1, err))
+			if len(errs) >= 10 {
+				break
+			}
+			continue
+		}
+
+		// Mark cross-measure ties
+		markCrossMeasureTies(events, measures)
+
+		// Auto-detect time sig from content when no explicit directive
+		if !md.explicitMeter && !md.hasBeatCode && hasBarline && !(mi == 0 && hasInitialMeter) {
+			actualTicks := totalTicks(events)
+			expectedTicks := timeSigTicks(effectiveTimeNum, effectiveTimeDen)
+			if actualTicks != expectedTicks && actualTicks > 0 {
+				g := gcd(actualTicks, TicksPerWholeNote)
+				effectiveTimeNum = actualTicks / g
+				effectiveTimeDen = TicksPerWholeNote / g
+			}
+		}
+
+		// Validate against explicit M directive
+		hasExplicitMeter := (mi == 0 && hasInitialMeter && hasBarline) || md.explicitMeter
+		if errStr := validateExplicitMeter(events, effectiveTimeNum, effectiveTimeDen, group, mi, hasSecondMeasure, hasExplicitMeter, mi == 0); errStr != "" {
+			errs = append(errs, errStr)
+			if len(errs) >= 10 {
+				break
+			}
+		}
+
+		// Split at barline and non-standard durations
+		events = splitAtBarline(events, effectiveTimeNum, effectiveTimeDen)
+		events = splitNonStandardDurations(events)
+
+		// Pickup detection
+		isPickup := detectPickup(events, effectiveTimeNum, effectiveTimeDen, mi, hasSecondMeasure)
+
+		measures = append(measures, MeasureResult{
+			Events:    events,
+			TimeNum:   effectiveTimeNum,
+			TimeDen:   effectiveTimeDen,
+			Fifths:    md.fifths,
+			IsPickup:  isPickup,
+			NumGroups: numGroups,
+		})
+
+		lastMeasureHadNote = measureHasNote(events)
+		currentFifths = md.fifths
+		currentTimeNum = effectiveTimeNum
+		currentTimeDen = effectiveTimeDen
+	}
+
+	// Resolve octaves across all measures
+	resolveOctavesMeasures(measures)
 
 	// Build final error
 	var finalErr error

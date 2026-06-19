@@ -137,9 +137,6 @@ func GenerateSMF(measures []parser.MeasureResult, bpm float64) ([]byte, Timeline
 
 			durTicks := int64(DPPQ * 4 * ev.Duration.Num / ev.Duration.Den)
 			voice := ev.Voice
-			if voice == 0 {
-				voice = 1
-			}
 
 			if ev.Split {
 				voiceTick[voice] += durTicks
