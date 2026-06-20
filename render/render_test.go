@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/mellis/m4bon/parser"
+	"github.com/mellis/m4bon/theory"
 )
 
 // rawCells calls buildCells on parsed DSL and returns cells for the first measure.
@@ -340,27 +341,27 @@ func TestPlainOutput(t *testing.T) {
 func TestEffectiveAccidental(t *testing.T) {
 	// C major — no key alterations
 	empty := map[string]int{}
-	if eff := effectiveAccidental("c", 0, false, empty); eff != 0 {
+	if eff := theory.EffectiveAccidental("c", 0, false, empty); eff != 0 {
 		t.Errorf("c in C major should be 0, got %d", eff)
 	}
-	if eff := effectiveAccidental("f", 1, false, empty); eff != 1 {
+	if eff := theory.EffectiveAccidental("f", 1, false, empty); eff != 1 {
 		t.Errorf("#f should be 1, got %d", eff)
 	}
 
 	// G major — F# in key
 	gMajor := map[string]int{"f": 1}
-	if eff := effectiveAccidental("f", 0, false, gMajor); eff != 1 {
+	if eff := theory.EffectiveAccidental("f", 0, false, gMajor); eff != 1 {
 		t.Errorf("f in G major should be 1, got %d", eff)
 	}
-	if eff := effectiveAccidental("c", 0, false, gMajor); eff != 0 {
+	if eff := theory.EffectiveAccidental("c", 0, false, gMajor); eff != 0 {
 		t.Errorf("c in G major should be 0, got %d", eff)
 	}
 	// Explicit natural overrides key sig
-	if eff := effectiveAccidental("f", 0, false, gMajor); eff != 1 {
+	if eff := theory.EffectiveAccidental("f", 0, false, gMajor); eff != 1 {
 		t.Errorf("f without explicit natural in G major is still sharp")
 	}
 	// Explicit natural cancels key sig
-	if eff := effectiveAccidental("f", 0, true, gMajor); eff != 0 {
+	if eff := theory.EffectiveAccidental("f", 0, true, gMajor); eff != 0 {
 		t.Errorf("%%f should cancel key sig, got %d", eff)
 	}
 }
@@ -368,31 +369,31 @@ func TestEffectiveAccidental(t *testing.T) {
 // TestKeySigMap tests the key signature map builder.
 func TestKeySigMap(t *testing.T) {
 	// C major
-	m := keySigMap(0)
+	m := theory.FifthsToAccidentalMap(0)
 	if len(m) != 0 {
 		t.Errorf("C major should have empty map, got %v", m)
 	}
 
 	// G major (1 sharp)
-	m = keySigMap(1)
+	m = theory.FifthsToAccidentalMap(1)
 	if m["f"] != 1 {
 		t.Errorf("G major should sharpen F, got %v", m)
 	}
 
 	// D major (2 sharps)
-	m = keySigMap(2)
+	m = theory.FifthsToAccidentalMap(2)
 	if m["f"] != 1 || m["c"] != 1 {
 		t.Errorf("D major should sharpen F and C, got %v", m)
 	}
 
 	// F major (1 flat)
-	m = keySigMap(-1)
+	m = theory.FifthsToAccidentalMap(-1)
 	if m["b"] != -1 {
 		t.Errorf("F major should flatten B, got %v", m)
 	}
 
 	// Bb major (2 flats)
-	m = keySigMap(-2)
+	m = theory.FifthsToAccidentalMap(-2)
 	if m["b"] != -1 || m["e"] != -1 {
 		t.Errorf("Bb major should flatten B and E, got %v", m)
 	}

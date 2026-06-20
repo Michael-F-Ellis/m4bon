@@ -3,8 +3,6 @@
 package tui
 
 import (
-	"time"
-
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/Michael-F-Ellis/macaudio"
 )
@@ -42,6 +40,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case positionMsg:
 		if m.midiPlayer != nil {
 			m.elapsed = m.midiPlayer.Position()
+			// Compute current measure from elapsed time
+			m.currentMeasure = m.measureAtTime(m.elapsed)
+			// State-based fallback: if player stopped internally, handle end
+			if m.isPlaying && m.midiPlayer.State() == macaudio.StateIdle {
+				m.isPlaying = false
+				m.isPaused = false
+				m.elapsed = 0
+				m.currentMeasure = m.startMeasure
+				return m, nil
+			}
 		}
 		if m.isPlaying || m.isPaused {
 			return m, m.elapsedTick()
@@ -156,11 +164,6 @@ func (m *model) handlePlayPause() (tea.Model, tea.Cmd) {
 
 	m.currentMeasure = m.startMeasure
 
-	// Stop any previous scheduler
-	if sched := m.transport.Scheduler(); sched != nil {
-		sched.Stop()
-	}
-
 	m.midiPlayer.Stop()
 	m.midiPlayer.Seek(m.elapsed)
 
@@ -171,33 +174,6 @@ func (m *model) handlePlayPause() (tea.Model, tea.Cmd) {
 	}
 	m.midiPlayer.PlaySegment(m.elapsed, endTime)
 
-	// Create fresh scheduler with callbacks from start measure to end measure
-	sched := macaudio.NewScheduler(m.midiPlayer)
-	for i, start := range m.timeline.MeasureStarts {
-		if i < m.startMeasure || i > m.endMeasure {
-			continue
-		}
-		idx := i
-		sched.ScheduleAt(start, func() {
-			if m.program != nil {
-				m.program.Send(advanceIndicatorMsg(idx))
-			}
-		})
-	}
-	// End-of-playback reset at endTime
-	sched.ScheduleAt(endTime, func() {
-		if m.program != nil {
-			m.program.Send(playbackEndedMsg{})
-		}
-	})
-	// End-of-playback reset
-	sched.ScheduleAt(m.timeline.TotalDuration, func() {
-		if m.program != nil {
-			m.program.Send(playbackEndedMsg{})
-		}
-	})
-	sched.Start(50 * time.Millisecond)
-
 	m.isPlaying = true
 	m.isPaused = false
 	return m, m.elapsedTick()
@@ -207,11 +183,6 @@ func (m *model) handleStop() (tea.Model, tea.Cmd) {
 	if m.midiPlayer != nil {
 		m.midiPlayer.Stop()
 		m.midiPlayer.Seek(0)
-	}
-
-	// Stop the scheduler
-	if sched := m.transport.Scheduler(); sched != nil {
-		sched.Stop()
 	}
 
 	m.isPlaying = false

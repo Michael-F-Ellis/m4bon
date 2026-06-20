@@ -27,9 +27,9 @@
           <step>C</step>
           <octave>4</octave>
         </pitch>
-        <duration>960</duration>
+        <duration>480</duration>
         <tie type="start"></tie>
-        <type>half</type>
+        <type>quarter</type>
         <notations>
           <tied type="start"></tied>
         </notations>
@@ -37,36 +37,30 @@
         <staff>1</staff>
       </note>
       <note>
+        <chord></chord>
+        <pitch>
+          <step>D</step>
+          <octave>4</octave>
+        </pitch>
+        <duration>480</duration>
+        <tie type="start"></tie>
+        <type>quarter</type>
+        <notations>
+          <tied type="start"></tied>
+        </notations>
+        <voice>1</voice>
+        <staff>1</staff>
+      </note>
+      <note>
+        <chord></chord>
         <pitch>
           <step>E</step>
           <octave>4</octave>
         </pitch>
         <duration>480</duration>
-        <type>quarter</type>
-        <voice>2</voice>
-        <staff>1</staff>
-      </note>
-      <note>
-        <pitch>
-          <step>G</step>
-          <octave>4</octave>
-        </pitch>
-        <duration>480</duration>
-        <type>quarter</type>
-        <voice>2</voice>
-        <staff>1</staff>
-      </note>
-      <note>
-        <pitch>
-          <step>C</step>
-          <octave>4</octave>
-        </pitch>
-        <duration>480</duration>
-        <tie type="stop"></tie>
         <tie type="start"></tie>
         <type>quarter</type>
         <notations>
-          <tied type="stop"></tied>
           <tied type="start"></tied>
         </notations>
         <voice>1</voice>
@@ -80,7 +74,7 @@
           <fifths>0</fifths>
         </key>
         <time>
-          <beats>3</beats>
+          <beats>1</beats>
           <beat-type>4</beat-type>
         </time>
         <clef>
@@ -95,54 +89,29 @@
         </pitch>
         <duration>480</duration>
         <tie type="stop"></tie>
+        <tie type="start"></tie>
         <type>quarter</type>
         <notations>
           <tied type="stop"></tied>
+          <tied type="start"></tied>
         </notations>
         <voice>1</voice>
         <staff>1</staff>
       </note>
       <note>
-        <pitch>
-          <step>F</step>
-          <octave>4</octave>
-        </pitch>
-        <duration>1440</duration>
-        <type>half</type>
-        <dot></dot>
-        <voice>2</voice>
-        <staff>1</staff>
-      </note>
-      <note>
+        <chord></chord>
         <pitch>
           <step>D</step>
           <octave>4</octave>
         </pitch>
         <duration>480</duration>
+        <tie type="stop"></tie>
+        <tie type="start"></tie>
         <type>quarter</type>
-        <voice>1</voice>
-        <staff>1</staff>
-      </note>
-      <note>
-        <pitch>
-          <step>B</step>
-          <octave>3</octave>
-        </pitch>
-        <duration>480</duration>
-        <type>quarter</type>
-        <voice>1</voice>
-        <staff>1</staff>
-      </note>
-    </measure>
-    <measure number="2">
-      <note>
-        <pitch>
-          <step>C</step>
-          <octave>4</octave>
-        </pitch>
-        <duration>1440</duration>
-        <type>half</type>
-        <dot></dot>
+        <notations>
+          <tied type="stop"></tied>
+          <tied type="start"></tied>
+        </notations>
         <voice>1</voice>
         <staff>1</staff>
       </note>
@@ -152,10 +121,39 @@
           <step>E</step>
           <octave>4</octave>
         </pitch>
-        <duration>1440</duration>
-        <type>half</type>
-        <dot></dot>
+        <duration>480</duration>
+        <tie type="stop"></tie>
+        <tie type="start"></tie>
+        <type>quarter</type>
+        <notations>
+          <tied type="stop"></tied>
+          <tied type="start"></tied>
+        </notations>
         <voice>1</voice>
+        <staff>1</staff>
+      </note>
+      <note>
+        <pitch>
+          <step>D</step>
+          <octave>4</octave>
+        </pitch>
+        <duration>480</duration>
+        <tie type="stop"></tie>
+        <type>quarter</type>
+        <notations>
+          <tied type="stop"></tied>
+        </notations>
+        <voice>2</voice>
+        <staff>1</staff>
+      </note>
+      <note>
+        <pitch>
+          <step>G</step>
+          <octave>3</octave>
+        </pitch>
+        <duration>480</duration>
+        <type>quarter</type>
+        <voice>3</voice>
         <staff>1</staff>
       </note>
     </measure>

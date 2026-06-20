@@ -9,15 +9,16 @@ import (
 	"sort"
 	"time"
 
+	"github.com/mellis/m4bon/frac"
 	"github.com/mellis/m4bon/parser"
 	"gitlab.com/gomidi/midi/v2/smf"
 )
 
 // DPPQ (divisions per quarter note) matches the MusicXML generator.
-const DPPQ = 480
+const DPPQ = frac.DPPQ
 
 // TicksPerWholeNote at the given DPPQ resolution.
-const TicksPerWholeNote = 1920
+const TicksPerWholeNote = frac.TicksPerWholeNote
 
 // Timeline maps measure indices to their wall-clock start times at a given BPM.
 type Timeline struct {
@@ -40,7 +41,7 @@ type voiceKey struct {
 
 func voiceToChannel(voice int) uint8 {
 	switch voice {
-	case 0, 1:
+	case 1:
 		return 0 // MIDI channel 1
 	case 2:
 		return 1 // MIDI channel 2

@@ -5,6 +5,9 @@ import (
 	"math"
 	"regexp"
 	"strings"
+
+	"github.com/mellis/m4bon/frac"
+	"github.com/mellis/m4bon/theory"
 )
 
 // --- Duration resolution ---
@@ -66,6 +69,19 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 				var pe *Event
 				if priorEvents != nil {
 					pe = priorEvents[1]
+					if pe == nil {
+						for v := 2; v <= 4; v++ {
+							if priorEvents[v] != nil {
+								pe = priorEvents[v]
+								break
+							}
+						}
+					}
+					// nil sentinel means voice existed but had no pitch (rest);
+					// skip silently rather than returning an error.
+					if priorEvents[1] == nil {
+						continue
+					}
 				}
 				if pe == nil || (pe.Type != EventNote && pe.Type != EventChord) {
 					return nil, fmt.Errorf("sustain with no prior note")
@@ -82,6 +98,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 					Split:           true,
 					Voice:           1,
 					GroupIdx:        gi,
+					NumSlots:        len(group.Slots),
 				}
 				if pe.Pitches != nil {
 					ev.Pitches = make([]Pitch, len(pe.Pitches))
@@ -150,6 +167,18 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 					var pe *Event
 					if priorEvents != nil {
 						pe = priorEvents[1]
+						if pe == nil {
+							for v := 2; v <= 4; v++ {
+								if priorEvents[v] != nil {
+									pe = priorEvents[v]
+									break
+								}
+							}
+						}
+						// nil sentinel: voice existed but had no pitch (rest); skip
+						if priorEvents[1] == nil {
+							continue
+						}
 					}
 					if pe == nil || (pe.Type != EventNote && pe.Type != EventChord) {
 						return nil, fmt.Errorf("sustain with no prior note across groups")
@@ -173,6 +202,9 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 					voiceLastIdx[1] = len(events) - 1
 				} else {
 					last := &events[len(events)-1]
+					if last.GroupIdx == gi {
+						last.NumSlots++
+					}
 					last.Duration.Num = last.Duration.Num*posDen + posNum*last.Duration.Den
 					last.Duration.Den = last.Duration.Den * posDen
 					gVal := gcd(last.Duration.Num, last.Duration.Den)
@@ -192,16 +224,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 					voice := vi + 1 // voices are 1-based
 					switch entry.Type {
 					case SlotNote:
-						ev := Event{
-							Type:            EventNote,
-							Duration:        Fraction{Num: posNum, Den: posDen},
-							Letter:          entry.Letter,
-							Accidental:      entry.Accidental,
-							OctaveShift:     entry.OctaveShift,
-							ExplicitNatural: entry.ExplicitNatural,
-							Voice:           voice,
-							GroupIdx:        gi,
-						}
+						ev := NewNoteEvent(entry.Letter, entry.Accidental, entry.OctaveShift, entry.ExplicitNatural, Fraction{Num: posNum, Den: posDen}, nil, voice, gi)
 						if needsTuplet {
 							ev.Nominal = &Fraction{Num: nomNum, Den: nomDen}
 						}
@@ -214,6 +237,10 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 						if !ok && priorEvents != nil {
 							// Check for cross-measure sustain
 							if pe, hasPrior := priorEvents[voice]; hasPrior {
+								if pe == nil {
+									// Voice existed but had a rest — skip silently
+									continue
+								}
 								ev := Event{
 									Type:            pe.Type,
 									Duration:        Fraction{Num: posNum, Den: posDen},
@@ -224,6 +251,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 									Split:           true,
 									Voice:           voice,
 									GroupIdx:        gi,
+									NumSlots:        1,
 								}
 								if pe.Pitches != nil {
 									ev.Pitches = make([]Pitch, len(pe.Pitches))
@@ -238,6 +266,9 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 							return nil, fmt.Errorf("sustain in voice %d with no prior note", voice)
 						}
 						last := &events[idx]
+						if last.GroupIdx == gi {
+							last.NumSlots++
+						}
 						last.Duration.Num = last.Duration.Num*posDen + posNum*last.Duration.Den
 						last.Duration.Den = last.Duration.Den * posDen
 						gVal := gcd(last.Duration.Num, last.Duration.Den)
@@ -252,12 +283,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 						}
 
 					case SlotRest:
-						ev := Event{
-							Type:     EventRest,
-							Duration: Fraction{Num: posNum, Den: posDen},
-							Voice:    voice,
-							GroupIdx: gi,
-						}
+						ev := NewRestEvent(Fraction{Num: posNum, Den: posDen}, nil, voice, gi)
 						if needsTuplet {
 							ev.Nominal = &Fraction{Num: nomNum, Den: nomDen}
 						}
@@ -266,26 +292,27 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 					}
 				}
 			} else {
-				// Traditional note or chord — single-voice (Voice=1)
-				ev := Event{
-					Type:     EventType(slot.Type),
-					Duration: Fraction{Num: posNum, Den: posDen},
-					Voice:    1,
-					GroupIdx: gi,
-				}
-				if needsTuplet {
-					ev.Nominal = &Fraction{Num: nomNum, Den: nomDen}
-				}
+				// Traditional note, chord, or rest — single-voice (Voice=1)
 				switch slot.Type {
 				case SlotNote:
-					ev.Letter = slot.Letter
-					ev.Accidental = slot.Accidental
-					ev.OctaveShift = slot.OctaveShift
-					ev.ExplicitNatural = slot.ExplicitNatural
+					ev := NewNoteEvent(slot.Letter, slot.Accidental, slot.OctaveShift, slot.ExplicitNatural, Fraction{Num: posNum, Den: posDen}, nil, 1, gi)
+					if needsTuplet {
+						ev.Nominal = &Fraction{Num: nomNum, Den: nomDen}
+					}
+					events = append(events, ev)
 				case SlotChord:
-					ev.Pitches = slot.Pitches
+					ev := NewChordEvent(slot.Pitches, Fraction{Num: posNum, Den: posDen}, nil, 1, gi)
+					if needsTuplet {
+						ev.Nominal = &Fraction{Num: nomNum, Den: nomDen}
+					}
+					events = append(events, ev)
+				case SlotRest:
+					ev := NewRestEvent(Fraction{Num: posNum, Den: posDen}, nil, 1, gi)
+					if needsTuplet {
+						ev.Nominal = &Fraction{Num: nomNum, Den: nomDen}
+					}
+					events = append(events, ev)
 				}
-				events = append(events, ev)
 				voiceLastIdx[1] = len(events) - 1
 			}
 		}
@@ -373,6 +400,14 @@ func splitAtBarline(events []Event, timeNum, timeDen int) []Event {
 		// ev1.Split retains its original value (false for first fragment)
 
 		ev2 := ev
+		if ev.Pitches != nil {
+			ev2.Pitches = make([]Pitch, len(ev.Pitches))
+			copy(ev2.Pitches, ev.Pitches)
+		}
+		if ev.Midis != nil {
+			ev2.Midis = make([]int, len(ev.Midis))
+			copy(ev2.Midis, ev.Midis)
+		}
 		ev2.Duration = Fraction{Num: afterNum, Den: afterDen}
 		ev2.Split = true
 
@@ -392,7 +427,7 @@ func splitAtBarline(events []Event, timeNum, timeDen int) []Event {
 // --- Split non-standard durations ---
 
 var standardDurations = []Fraction{
-	{1, 2}, {1, 4}, {1, 8}, {1, 16}, {1, 32}, {1, 64}, {1, 128},
+	{Num: 1, Den: 2}, {Num: 1, Den: 4}, {Num: 1, Den: 8}, {Num: 1, Den: 16}, {Num: 1, Den: 32}, {Num: 1, Den: 64}, {Num: 1, Den: 128},
 }
 
 // lessThanFraction returns true if a < b using cross-multiplication (no float).
@@ -468,7 +503,7 @@ func stripDirectives(text string) (stripped string, fifths int, timeNum, timeDen
 	timeNum = 4  // default: 4/4
 	timeDen = 4
 
-	re := regexp.MustCompile(`^(K\S+\s*)?(M\S+\s*)?`)
+	re := regexp.MustCompile(`^([kK]\S+\s*)?([mM]\S+\s*)?`)
 	m := re.FindStringSubmatch(text)
 	if m == nil {
 		return text, fifths, timeNum, timeDen, false
@@ -483,7 +518,7 @@ func stripDirectives(text string) (stripped string, fifths int, timeNum, timeDen
 	if directives != "" {
 		// Parse K directive
 		for _, part := range strings.Fields(directives) {
-			if strings.HasPrefix(part, "K") && len(part) > 1 {
+			if (strings.HasPrefix(part, "K") || strings.HasPrefix(part, "k")) && len(part) > 1 {
 				body := strings.ToLower(part[1:])
 				// Map to key signature
 				// Try exact match first, then try various orderings
@@ -492,7 +527,7 @@ func stripDirectives(text string) (stripped string, fifths int, timeNum, timeDen
 					fifths = f
 				}
 			}
-			if strings.HasPrefix(part, "M") && len(part) > 1 {
+			if (strings.HasPrefix(part, "M") || strings.HasPrefix(part, "m")) && len(part) > 1 {
 				body := part[1:]
 				if n, err := fmt.Sscanf(body, "%d/%d", &timeNum, &timeDen); err == nil && n == 2 {
 					hasMeter = true
@@ -514,8 +549,8 @@ func canonicalKey(body string) string {
 	letter := ""
 	acc := ""
 	for _, ch := range body {
-		if ch >= 'a' && ch <= 'g' {
-			letter = string(ch)
+		if (ch >= 'a' && ch <= 'g') || (ch >= 'A' && ch <= 'G') {
+			letter = strings.ToLower(string(ch))
 		} else {
 			switch ch {
 			case '#', '♯':
@@ -535,15 +570,11 @@ func canonicalKey(body string) string {
 
 // --- Octave resolution ---
 
-var noteOffsets = map[string]int{
-	"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11,
-}
-
 // nextHigherPitch finds the smallest MIDI note with the given letter and accidental
 // that is strictly higher than the reference pitch. Used for chord voicing where
 // each subsequent chord tone must be the next octave higher.
 func nextHigherPitch(letter string, accidental, octaveShift int, reference int) int {
-	base := noteOffsets[letter]
+	base := theory.NoteOffsets[letter]
 	raw := base + accidental
 	refOctave := reference / 12
 	for oct := refOctave; oct <= refOctave+4; oct++ {
@@ -563,7 +594,7 @@ func nextHigherPitch(letter string, accidental, octaveShift int, reference int) 
 }
 
 func resolvePitch(letter string, accidental, octaveShift int, reference int) int {
-	base := noteOffsets[letter]
+	base := theory.NoteOffsets[letter]
 	refOctave := reference / 12
 	raw := base + accidental
 
@@ -590,7 +621,7 @@ func resolvePitch(letter string, accidental, octaveShift int, reference int) int
 
 // timeSigTicks returns the total ticks for a measure of the given time signature.
 func timeSigTicks(num, den int) int {
-	return TicksPerWholeNote * num / den
+	return frac.TicksPerWholeNote * num / den
 }
 
 // totalTicks returns the total duration of events in ticks.
@@ -607,7 +638,7 @@ func totalTicks(events []Event) int {
 			v = 1
 		}
 		t := voiceTick[v]
-		t += TicksPerWholeNote * ev.Duration.Num / ev.Duration.Den
+		t += frac.TicksPerWholeNote * ev.Duration.Num / ev.Duration.Den
 		voiceTick[v] = t
 		if t > maxTick {
 			maxTick = t
@@ -625,19 +656,7 @@ func deriveTimeSig(numBeats int, beat BeatDuration) (int, int) {
 // fifthsToAccidentalMap builds a map from pitch letter to its key-signature accidental.
 // fifths: circle of fifths position (positive=sharps, negative=flats).
 func fifthsToAccidentalMap(fifths int) map[string]int {
-	m := make(map[string]int)
-	sharpOrder := []string{"f", "c", "g", "d", "a", "e", "b"}
-	flatOrder := []string{"b", "e", "a", "d", "g", "c", "f"}
-	if fifths > 0 {
-		for i := 0; i < fifths && i < len(sharpOrder); i++ {
-			m[sharpOrder[i]] = 1
-		}
-	} else if fifths < 0 {
-		for i := 0; i < -fifths && i < len(flatOrder); i++ {
-			m[flatOrder[i]] = -1
-		}
-	}
-	return m
+	return theory.FifthsToAccidentalMap(fifths)
 }
 
 // effectiveAccidental computes the accidental to use for pitch resolution:
@@ -646,16 +665,7 @@ func fifthsToAccidentalMap(fifths int) map[string]int {
 //   - Otherwise check the key signature
 //   - Default 0
 func effectiveAccidental(letter string, explicitAcc int, explicitNatural bool, keyAcc map[string]int) int {
-	if explicitNatural {
-		return 0
-	}
-	if explicitAcc != 0 {
-		return explicitAcc
-	}
-	if acc, ok := keyAcc[letter]; ok {
-		return acc
-	}
-	return 0
+	return theory.EffectiveAccidental(letter, explicitAcc, explicitNatural, keyAcc)
 }
 
 // --- Main parse entry point ---
@@ -703,10 +713,15 @@ func scanMeasureDirectives(tokens []Token, defaultFifths, defaultTimeNum, defaul
 	md.fifths = defaultFifths
 	md.timeNum = defaultTimeNum
 	md.timeDen = defaultTimeDen
+	foundNotation := false
 
 	for _, tok := range tokens {
 		raw := tok.Raw
-		if strings.HasPrefix(raw, "k") && len(raw) > 1 {
+		if foundNotation {
+			md.beatTokens = append(md.beatTokens, tok)
+			continue
+		}
+		if strings.HasPrefix(raw, "k") || strings.HasPrefix(raw, "K") {
 			body := raw[1:]
 			canon := canonicalKey(body)
 			if f, ok := keySigMap[canon]; ok {
@@ -714,23 +729,26 @@ func scanMeasureDirectives(tokens []Token, defaultFifths, defaultTimeNum, defaul
 			}
 			continue
 		}
-		if strings.HasPrefix(raw, "m") && len(raw) > 1 {
+		if strings.HasPrefix(raw, "m") || strings.HasPrefix(raw, "M") {
 			body := raw[1:]
 			if n, err := fmt.Sscanf(body, "%d/%d", &md.timeNum, &md.timeDen); err == nil && n == 2 {
 				md.explicitMeter = true
 			}
 			continue
 		}
-		if strings.HasPrefix(raw, "b") && len(raw) > 1 {
-			md.hasBeatCode = true
+		if (strings.HasPrefix(raw, "b") || strings.HasPrefix(raw, "B")) && len(raw) > 1 {
 			bc := strings.ToUpper(raw[1:])
 			if bd, ok := BeatDurationCodes[bc]; ok {
+				md.hasBeatCode = true
 				md.beat = bd
-			} else {
-				md.beat = BeatDuration{1, 4} // fallback
+				continue
 			}
+			// Unknown beat suffix — treat as notation token
+			foundNotation = true
+			md.beatTokens = append(md.beatTokens, tok)
 			continue
 		}
+		foundNotation = true
 		md.beatTokens = append(md.beatTokens, tok)
 	}
 
@@ -785,6 +803,41 @@ func buildPriorEvents(measures []MeasureResult) map[int]*Event {
 			}
 		}
 	}
+
+	// Expand traditional chords: each pitch is a virtual voice (1-based).
+	// This allows voice-poly sustains (e.g. (- - g)) to pick up
+	// individual pitches from a prior measure's chord (e.g. (c d e)).
+	for i := len(prevEvents) - 1; i >= 0; i-- {
+		ev := &prevEvents[i]
+		if ev.Type == EventChord && ev.Voice == 1 && len(ev.Pitches) > 1 {
+			for pi := 1; pi < len(ev.Pitches); pi++ {
+				v := pi + 1 // voice 2, 3, 4...
+				if _, ok := priorEvents[v]; !ok {
+					p := ev.Pitches[pi]
+					virtual := Event{
+						Type:            EventNote,
+						Letter:          p.Letter,
+						Accidental:      p.Accidental,
+						OctaveShift:     p.OctaveShift,
+						ExplicitNatural: p.ExplicitNatural,
+						Voice:           v,
+					}
+					priorEvents[v] = &virtual
+				}
+			}
+		}
+	}
+
+	// Track voices that had explicit rests as nil sentinels.
+	for i := len(prevEvents) - 1; i >= 0; i-- {
+		ev := &prevEvents[i]
+		if ev.Type == EventRest {
+			if _, ok := priorEvents[ev.Voice]; !ok {
+				priorEvents[ev.Voice] = nil // voice exists, had no pitch
+			}
+		}
+	}
+
 	return priorEvents
 }
 
@@ -977,9 +1030,9 @@ func ParseDSL(text string) DSLResult {
 			actualTicks := totalTicks(events)
 			expectedTicks := timeSigTicks(effectiveTimeNum, effectiveTimeDen)
 			if actualTicks != expectedTicks && actualTicks > 0 {
-				g := gcd(actualTicks, TicksPerWholeNote)
+				g := gcd(actualTicks, frac.TicksPerWholeNote)
 				effectiveTimeNum = actualTicks / g
-				effectiveTimeDen = TicksPerWholeNote / g
+				effectiveTimeDen = frac.TicksPerWholeNote / g
 			}
 		}
 

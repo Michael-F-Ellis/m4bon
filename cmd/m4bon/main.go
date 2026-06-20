@@ -68,7 +68,7 @@ func main() {
 
 	// TUI mode
 	if *tuiFlag {
-		dsl = musicxml.SanitizeDSL(dsl)
+		dsl = parser.SanitizeDSL(dsl)
 		err := tui.Run(dsl, dslLabel, *bpmFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
@@ -77,7 +77,7 @@ func main() {
 		return
 	}
 
-	dsl = musicxml.SanitizeDSL(dsl)
+	dsl = parser.SanitizeDSL(dsl)
 	if dsl == "" {
 		fmt.Fprintln(os.Stderr, "Empty DSL input after sanitization")
 		os.Exit(1)

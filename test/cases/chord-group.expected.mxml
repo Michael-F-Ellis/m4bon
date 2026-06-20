@@ -33,7 +33,7 @@
         <staff>1</staff>
       </note>
       <note>
-        <chord>true</chord>
+        <chord></chord>
         <pitch>
           <step>C</step>
           <octave>4</octave>
@@ -44,7 +44,7 @@
         <staff>1</staff>
       </note>
       <note>
-        <chord>true</chord>
+        <chord></chord>
         <pitch>
           <step>E</step>
           <octave>4</octave>

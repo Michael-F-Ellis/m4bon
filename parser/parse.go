@@ -4,9 +4,10 @@ package parser
 import (
 	"errors"
 	"fmt"
-	"math"
 	"regexp"
 	"strings"
+
+	"github.com/mellis/m4bon/frac"
 )
 
 // --- Types ---
@@ -48,10 +49,8 @@ type ChordEntry struct {
 	ExplicitNatural bool // % was used; overrides key signature
 }
 
-type Fraction struct {
-	Num int
-	Den int
-}
+// Fraction represents a rational number.
+type Fraction = frac.Fraction
 
 type EventType string
 
@@ -77,6 +76,7 @@ type Event struct {
 	TieNext           bool      // cross-measure tie to next measure's first note
 	Voice             int       // 1-based voice number (1,2,3 for voice-poly)
 	GroupIdx          int       // original beat-group index, for render grouping
+	NumSlots          int       // number of slot positions this event spans (for render)
 	TupletActualNotes int       // EventTupletStart only
 	TupletNormalNotes int       // EventTupletStart only
 }
@@ -93,6 +93,7 @@ func NewNoteEvent(letter string, accidental, octaveShift int, explicitNatural bo
 		ExplicitNatural: explicitNatural,
 		Voice:           voice,
 		GroupIdx:        groupIdx,
+		NumSlots:        1,
 	}
 }
 
@@ -105,6 +106,7 @@ func NewChordEvent(pitches []Pitch, dur Fraction, nominal *Fraction, voice, grou
 		Pitches:  pitches,
 		Voice:    voice,
 		GroupIdx: groupIdx,
+		NumSlots: 1,
 	}
 }
 
@@ -116,6 +118,7 @@ func NewRestEvent(dur Fraction, nominal *Fraction, voice, groupIdx int) Event {
 		Nominal:  nominal,
 		Voice:    voice,
 		GroupIdx: groupIdx,
+		NumSlots: 1,
 	}
 }
 
@@ -210,8 +213,7 @@ var BeatDurationCodes = map[string]BeatDuration{
 	"T":  {1, 32},
 }
 
-// TicksPerWholeNote is the number of ticks in a whole note (DPPQ * 4).
-const TicksPerWholeNote = 1920
+
 
 // KeySignature represents a key signature via its position on the circle of fifths.
 // Positive values = sharps, negative values = flats, zero = C major.
@@ -221,38 +223,28 @@ type KeySignature struct {
 
 // --- Helpers ---
 
+// gcd returns the greatest common divisor of a and b.
+// Deprecated: use frac.GCD
 func gcd(a, b int) int {
-	a = int(math.Abs(float64(a)))
-	b = int(math.Abs(float64(b)))
-	for b > 0 {
-		a, b = b, a%b
-	}
-	return a
+	return frac.GCD(a, b)
 }
 
+// isPowerOf2 returns true if n is a power of two.
+// Deprecated: use frac.IsPowerOf2
 func isPowerOf2(n int) bool {
-	return n > 0 && (n&(n-1)) == 0
+	return frac.IsPowerOf2(n)
 }
 
+// lowerPowerOf2 returns the largest power of two less than n.
+// Deprecated: use frac.LowerPowerOf2
 func lowerPowerOf2(n int) int {
-	if n <= 1 {
-		return 1
-	}
-	p := 1
-	for p*2 < n {
-		p *= 2
-	}
-	return p
+	return frac.LowerPowerOf2(n)
 }
 
+// isStandardDuration returns true if the reduced fraction z/n is a standard duration.
+// Deprecated: use frac.IsStandardDuration
 func isStandardDuration(z, n int) bool {
-	g := gcd(z, n)
-	z /= g
-	n /= g
-	if !isPowerOf2(n) {
-		return false
-	}
-	return z == 1 || z == 3
+	return frac.IsStandardDuration(z, n)
 }
 
 func countActivePositions(slots []Slot) int {
@@ -267,17 +259,29 @@ func countActivePositions(slots []Slot) int {
 
 // --- Normalize ---
 
-var accidentalReplacements = map[rune]string{
-	'♯': "#",
-	'♭': "&",
-	'♮': "%",
+// SanitizeDSL strips comments and trims whitespace from DSL text.
+// A comment is a line whose first non-whitespace character is '#' followed
+// by whitespace (or just '#' alone). Bare '#c' is NOT treated as a comment.
+func SanitizeDSL(text string) string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		// Check if line is a comment: "#" or "# text" (not "#c", "#&b", etc.)
+		if strings.HasPrefix(trimmed, "#") && (len(trimmed) == 1 || trimmed[1] == ' ') {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	return strings.Join(lines, " ")
 }
 
 func normalizePitchInput(text string) string {
-	t := strings.ToLower(text)
-	for r, s := range accidentalReplacements {
-		t = strings.ReplaceAll(t, string(r), s)
-	}
+	t := strings.ReplaceAll(text, "♯", "#")
+	t = strings.ReplaceAll(t, "♭", "&")
+	t = strings.ReplaceAll(t, "♮", "%")
 	return t
 }
 
@@ -499,6 +503,11 @@ func parseGroup(raw string, priorPitchExists bool) ParseResult {
 			chordPitches = nil
 			i++
 			continue
+		}
+
+		// Reject uppercase letters (must use lowercase for pitch names)
+		if ch >= 'A' && ch <= 'G' {
+			return err("uppercase notes not allowed — use lowercase", i)
 		}
 
 		// Pitch letter

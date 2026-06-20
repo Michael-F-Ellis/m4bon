@@ -56,7 +56,7 @@ func TestSanitizeDSL(t *testing.T) {
 		{"c d e f\n\n\ng a b c", "c d e f g a b c"}, // blank lines stripped
 	}
 	for _, tc := range cases {
-		got := SanitizeDSL(tc.input)
+		got := parser.SanitizeDSL(tc.input)
 		if got != tc.want {
 			t.Errorf("SanitizeDSL(%q) = %q, want %q", tc.input, got, tc.want)
 		}

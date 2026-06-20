@@ -52,26 +52,58 @@ if priorEvents != nil {
 }
 ```
 
-**For cross-measure voice lookup in the voice-poly path** (line 216): Already correct — uses `priorEvents[voice]` with the entry's actual voice number.
+**For cross-measure voice lookup in the voice-poly path** (line 216): Uses `priorEvents[voice]` with the entry's actual voice number. However, when the prior measure's last event is a traditional chord (e.g. `(c d e)` at voice 1), `buildPriorEvents` only creates `priorEvents[1]` — voices 2+ have no entry even though the chord's inner pitches should be available for sustain. The fix for this is in `buildPriorEvents` (see Implementation §1a below).
 
 **For sustain-after-rest:** When `(c ; e)` establishes voice 2 with a rest and `(- ; g)` sustains it later, `buildPriorEvents` only tracks voice 2 if it had a note (EventNote/EventChord). A rest doesn't create a voice entry. The sustain code should treat "voice existed but had no note" as valid — the `-` simply means the voice is silent in this slot. Add a `restedVoices` set to the prior events map: if a voice rested and is sustained, skip it (no event produced).
 
 ### Implementation
 
-1. In `buildPriorEvents`, also track voices that had explicit rests by adding a sentinel:
-   ```go
-   // After the EventNote/EventChord loop:
-   for i := len(prevEvents) - 1; i >= 0; i-- {
-       ev := &prevEvents[i]
-       if ev.Type == EventRest {
-           if _, ok := priorEvents[ev.Voice]; !ok {
-               priorEvents[ev.Voice] = nil // voice exists, had no pitch
-           }
-       }
-   }
-   ```
+**1a. In `buildPriorEvents`: expand traditional chords into per-voice entries.**
 
-2. In `resolveDurationsWithPrior`, the sustain code at lines 68 and 152 already checks `pe == nil` — extend it to accept a nil sentinel as "voice exists, skip silently" rather than returning an error.
+When a traditional chord like `(c d e)` produces an `EventChord` at voice 1, each pitch should be accessible by index as a per-voice entry for voice-poly sustain resolution. Add after the existing EventNote/EventChord loop:
+
+```go
+// Expand traditional chords: each pitch is a virtual voice (1-based).
+// This allows voice-poly sustains (e.g. (- - g)) to pick up
+// individual pitches from a prior measure's chord (e.g. (c d e)).
+for i := len(prevEvents) - 1; i >= 0; i-- {
+    ev := &prevEvents[i]
+    if ev.Type == EventChord && ev.Voice == 1 && len(ev.Pitches) > 1 {
+        for pi := 1; pi < len(ev.Pitches); pi++ {
+            v := pi + 1 // voice 2, 3, 4...
+            if _, ok := priorEvents[v]; !ok {
+                // Build a virtual single-note event from this chord pitch
+                p := ev.Pitches[pi]
+                virtual := Event{
+                    Type:            EventNote,
+                    Letter:          p.Letter,
+                    Accidental:      p.Accidental,
+                    OctaveShift:     p.OctaveShift,
+                    ExplicitNatural: p.ExplicitNatural,
+                    Voice:           v,
+                }
+                priorEvents[v] = &virtual
+            }
+        }
+    }
+}
+```
+
+**1b. In `buildPriorEvents`, track voices that had explicit rests** by adding a nil sentinel:
+
+```go
+// After the chord-expansion loop:
+for i := len(prevEvents) - 1; i >= 0; i-- {
+    ev := &prevEvents[i]
+    if ev.Type == EventRest {
+        if _, ok := priorEvents[ev.Voice]; !ok {
+            priorEvents[ev.Voice] = nil // voice exists, had no pitch
+        }
+    }
+}
+```
+
+**2. In `resolveDurationsWithPrior`**, the sustain code at lines 68 and 152 already checks `pe == nil` — extend it to accept a nil sentinel as "voice exists, skip silently" rather than returning an error. When `pe` is non-nil but has `Type == EventChord` (traditional chord → voice-poly transition), note/chord sustain events should be produced normally; the `Pitches`/`Midis` arrays will be copied.
 
 ### Test cases (see Step 10)
 
@@ -359,7 +391,7 @@ Keep the CLI golden tests as smoke tests (they verify the binary works end-to-en
 M4/4 (c - e) | (- - g)
 ```
 
-Voice 2's sustain in measure 1 has no prior note. `parseGroup` already catches this: it calls `emitNote` before the `-`, which clears `hasLetter`, then the `-` handler checks `len(chordPitches) == 0 && !priorPitchExists` and returns an error. This is existing correct behavior — verify it with a golden error test.
+Voice 2's sustain in measure 1 has no prior note. `resolveDurationsWithPrior` catches this: voice 2's sustain entry has no `voiceLastIdx` entry and `priorEvents` is nil (first measure), so the error `"sustain in voice %d with no prior note"` fires. This is existing correct behavior — verify it with a golden error test.
 
 ### Working case 1 — voice 2 rests then voice 1 sustains across measure
 
@@ -413,3 +445,113 @@ Each step can be committed independently after its tests pass.
 - Voice-poly sustain test case passes
 - Chord XML output contains `<chord/>` not `<chord>true</chord>`
 - `SanitizeDSL` is in `parser` package; `cmd/m4bon` no longer imports `musicxml` directly
+
+---
+
+## Bugs Discovered During Initial Run — Incorporate Into Plan Steps
+
+These were found and fixed during the first execution. Incorporate them into the relevant steps when re-running.
+
+### Bug A: `b` beat-directive prefix conflicts with note B (`scanMeasureDirectives`)
+
+**File:** `parser/pipeline.go`, function `scanMeasureDirectives`
+
+**Symptom:** A group token like `bag` starts with `b` and `len > 1`, so it gets consumed as a beat-code directive with suffix `"ag"`. Since `BeatDurationCodes["AG"]` doesn't exist, the old code fell back to `BeatDuration{1, 4}`, corrupting the time signature for the rest of the piece. Each subsequent measure derived a wrong time sig from the corrupted beat.
+
+**Fix (applied after Step 5 — constructor wiring):**
+
+1. Don't set `md.hasBeatCode = true` until the suffix is confirmed valid:
+   ```go
+   if strings.HasPrefix(raw, "b") && len(raw) > 1 {
+       bc := strings.ToUpper(raw[1:])
+       if bd, ok := BeatDurationCodes[bc]; ok {
+           md.hasBeatCode = true
+           md.beat = bd
+           continue
+       }
+       // Unknown beat suffix — fall through to beatTokens
+   }
+   ```
+2. Add a `foundNotation bool` flag that stops directive scanning after the first non-directive token. This bounds the ambiguity — directives must appear at the start of the measure, before any notation.
+
+### Bug B: Render output omits intra-group sustains
+
+**File:** `render/render.go`, function `buildMeasureCells`
+
+**Symptom:** A group like `c-b` renders as `cb` instead of `c-b`. The sustain `-` is absorbed into the preceding note's duration during event creation and leaves no trace.
+
+**Fix (applied after Step 5 — constructor wiring):**
+
+1. Add a field to `Event`:
+   ```go
+   NumSlots int  // number of slot positions this event spans (for render)
+   ```
+2. In `resolveDurationsWithPrior` in `parser/pipeline.go`:
+   - Set `NumSlots: len(group.Slots)` on cross-measure sustain events (they span the entire group).
+   - Set `NumSlots = 1` on regular note/chord/rest events.
+   - After a sustain extends the previous event in the same group: `last.NumSlots++`.
+3. In the renderer's `buildMeasureCells`, after rendering each event's cells:
+   ```go
+   for s := 1; s < ev.NumSlots; s++ {
+       cells = append(cells, Cell{Content: "-", Style: StyleSustainRest})
+   }
+   ```
+4. Do NOT increment `NumSlots` in the pure-sustain-group extension path (lines ~92-108 in pipeline.go) — that's a cross-group sustain, not an intra-group absorbed slot.
+
+### Bug C: Uppercase letters accepted as note values
+
+**File:** `parser/parse.go`, function `parseGroup`
+
+**Fix (applied after Step 1 or whenever parseGroup is touched):**
+
+Add a rejection check before the existing pitch letter handler:
+```go
+if ch >= 'A' && ch <= 'G' {
+    return err("uppercase notes not allowed — use lowercase", i)
+}
+```
+
+Also in `normalizePitchInput`, remove the `strings.ToLower(text)` call — only normalize Unicode accidental glyphs (♯♭♮). This preserves case through the tokenizer, allowing directives `K`, `M`, `B` (uppercase) to be distinguished from note tokens. Update `stripDirectives` regex and `canonicalKey` accordingly.
+
+### Bug D: TUI scheduler goroutine leak (Playing→Stopped state failure)
+
+**Files:** `cmd/m4bon/tui/model.go`, `cmd/m4bon/tui/update.go`
+
+**Symptom:** After playback ends naturally, the state indicator doesn't transition from "▶ Playing" to "■ Stopped". The standalone scheduler created in `handlePlayPause()` (`update.go:181`) is never stored or stopped between play sessions, causing multiple goroutines to poll the player concurrently with stale callback entries.
+
+**Fix (independent of refactoring — can be applied any time):**
+
+1. Add `scheduler *macaudio.Scheduler` field to `model`.
+2. In `handlePlayPause()`, stop `m.scheduler` (not `m.transport.Scheduler()`) before creating a new one, and save the new one: `m.scheduler = sched`.
+3. In `handleStop()` and `cleanup()`, stop `m.scheduler`.
+4. Add a guard in `handlePlaybackEnded()`: `if m.scheduler == nil { return m, nil }` to discard stale `playbackEndedMsg` from previous sessions.
+5. Remove `p.playStartUs = 0` from `dlsMIDIPlayer.Stop()` in `/Users/mellis/macaudio/midi_darwin.go` so the scheduler can still read a valid position after the player stops internally.
+6. Add a state-based fallback in the `positionMsg` handler: if `m.isPlaying && m.midiPlayer.State() == macaudio.StateIdle`, call `handlePlaybackEnded()`.
+
+### Bug E: `normalizePitchInput` lowercases directives, preventing case-based disambiguation
+
+**File:** `parser/parse.go`, function `normalizePitchInput`
+
+**Fix (part of Bug C — do together):**
+
+Change from:
+```go
+func normalizePitchInput(text string) string {
+    t := strings.ToLower(text)
+    for r, s := range accidentalReplacements {
+        t = strings.ReplaceAll(t, string(r), s)
+    }
+    return t
+}
+```
+To:
+```go
+func normalizePitchInput(text string) string {
+    t := strings.ReplaceAll(text, "♯", "#")
+    t = strings.ReplaceAll(t, "♭", "&")
+    t = strings.ReplaceAll(t, "♮", "%")
+    return t
+}
+```
+Then update `stripDirectives` regex from `^(K\S+\s*)?(M\S+\s*)?` to `^([kK]\S+\s*)?([mM]\S+\s*)?` and its `strings.HasPrefix(part, "K")` checks to also accept lowercase. Update `canonicalKey` to handle uppercase letters.
+

@@ -8,7 +8,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mellis/m4bon/midi"
-	"github.com/mellis/m4bon/musicxml"
 	"github.com/mellis/m4bon/parser"
 )
 
@@ -33,7 +32,7 @@ func Run(dslText, label string, bpm float64) error {
 	}
 
 	// Sanitize and parse DSL
-	sanitized := musicxml.SanitizeDSL(dslText)
+	sanitized := parser.SanitizeDSL(dslText)
 	if sanitized == "" {
 		return fmt.Errorf("empty DSL after sanitization")
 	}

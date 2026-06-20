@@ -3,11 +3,13 @@ package render
 import (
 	"fmt"
 
+	"github.com/mellis/m4bon/frac"
 	"github.com/mellis/m4bon/parser"
+	"github.com/mellis/m4bon/theory"
 )
 
 // TicksPerWholeNote is the tick resolution used for position grouping.
-const TicksPerWholeNote = 1920
+const TicksPerWholeNote = frac.TicksPerWholeNote
 
 // Render produces the colorized text output for a sequence of measures.
 // Returns one line per measure with ANSI escape codes for colors.
@@ -44,7 +46,7 @@ func buildMeasureCells(m parser.MeasureResult, measureNum int) CellSeq {
 	cells = append(cells, Cell{Content: prefix, Style: StyleDefault})
 
 	// Build key signature accidental map for this measure
-	keyAcc := keySigMap(m.Fifths)
+	keyAcc := theory.FifthsToAccidentalMap(m.Fifths)
 
 	// Group events by beat-group index
 	groups := groupEventsByGroupIdx(m.Events)
@@ -67,6 +69,11 @@ func buildMeasureCells(m parser.MeasureResult, measureNum int) CellSeq {
 				cells = append(cells, eventCells...)
 				if (ev.Type == parser.EventNote || ev.Type == parser.EventChord) && !ev.Split {
 					firstInMeasure = false
+				}
+				// For events spanning multiple slots (intra-group sustains),
+				// render a "-" for each absorbed slot position.
+				for s := 1; s < ev.NumSlots; s++ {
+					cells = append(cells, Cell{Content: "-", Style: StyleSustainRest})
 				}
 			}
 			gi++
@@ -160,7 +167,7 @@ func eventToCells(ev parser.Event, keyAcc map[string]int, firstInMeasure bool) [
 // noteStyle determines the style class for a pitch based on its effective
 // accidental (key signature + explicit accidental + explicit natural).
 func noteStyle(letter string, explicitAcc int, explicitNatural bool, keyAcc map[string]int) StyleClass {
-	eff := effectiveAccidental(letter, explicitAcc, explicitNatural, keyAcc)
+	eff := theory.EffectiveAccidental(letter, explicitAcc, explicitNatural, keyAcc)
 	switch eff {
 	case 1:
 		return StyleSharp
@@ -175,45 +182,7 @@ func noteStyle(letter string, explicitAcc int, explicitNatural bool, keyAcc map[
 	}
 }
 
-// effectiveAccidental computes the effective accidental for a pitch:
-//   - If explicitNatural is true, the pitch is natural (overrides key sig)
-//   - If explicitAcc != 0, it overrides the key signature
-//   - Otherwise, use the key signature's alteration for this letter
-//   - If neither, the pitch is natural (0)
-func effectiveAccidental(letter string, explicitAcc int, explicitNatural bool, keyAcc map[string]int) int {
-	if explicitNatural {
-		return 0
-	}
-	if explicitAcc != 0 {
-		return explicitAcc
-	}
-	if acc, ok := keyAcc[letter]; ok {
-		return acc
-	}
-	return 0
-}
 
-// keySigMap builds a map from pitch letter to its key-signature accidental.
-// fifths: circle of fifths position (positive=sharps, negative=flats).
-func keySigMap(fifths int) map[string]int {
-	m := make(map[string]int)
-	sharpOrder := []string{"f", "c", "g", "d", "a", "e", "b"}
-	flatOrder := []string{"b", "e", "a", "d", "g", "c", "f"}
-	if fifths > 0 && fifths <= 7 {
-		for i := 0; i < fifths; i++ {
-			m[sharpOrder[i]] = 1
-		}
-	} else if fifths < 0 {
-		n := -fifths
-		if n > 7 {
-			n = 7
-		}
-		for i := 0; i < n; i++ {
-			m[flatOrder[i]] = -1
-		}
-	}
-	return m
-}
 
 // octaveSubscript returns the Unicode subscript string for the given MIDI
 // pitch, or empty string if show is false or the octave is out of range.

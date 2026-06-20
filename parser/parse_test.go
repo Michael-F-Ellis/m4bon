@@ -12,6 +12,7 @@ func TestParseBasicNotes(t *testing.T) {
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
+	validateEvents(t, r.Measures[0].Events)
 	if len(r.Measures[0].Events) != 4 {
 		t.Fatalf("expected 4 events, got %d", len(r.Measures[0].Events))
 	}
@@ -339,5 +340,14 @@ func TestParseVoicePolyThreeGroupSustain(t *testing.T) {
 	}
 	if evs[3].Voice != 2 || evs[3].Letter != "g" {
 		t.Errorf("event 3: expected G voice 2")
+	}
+}
+
+func validateEvents(t *testing.T, events []Event) {
+	t.Helper()
+	for i, ev := range events {
+		if err := ev.Validate(); err != nil {
+			t.Errorf("event %d invalid: %v", i, err)
+		}
 	}
 }

@@ -18,26 +18,40 @@ Originally a MuseScore 4 QML plugin — the parser was ported to Go when the Mus
 m4bon/
 ├── m4bon.go                 # Public API: m4bon.Compile(dsl) → (string, error)
 ├── go.mod / go.sum          # Go module (github.com/mellis/m4bon)
+├── Makefile                 # build, test, check, golden targets
 ├── cmd/
 │   └── m4bon/
 │       ├── main.go          # CLI entry point
 │       ├── main_test.go     # Integration tests (CLI invocation)
-│       └── golden_test.go   # Golden file tests
+│       ├── golden_test.go   # CLI golden file tests
+│       └── tui/             # Interactive TUI (macOS-only, darwin+cgo)
 ├── parser/
 │   ├── parse.go             # Tokenizer + parseGroup state machine
 │   ├── pipeline.go          # resolveDurations, split, octaves, ParseDSL
-│   └── parse_test.go        # Unit tests for parser
+│   ├── parse_test.go        # Unit tests for parser
+│   └── sanitize.go          # SanitizeDSL (stripped out of musicxml)
 ├── musicxml/
-│   └── xml.go               # MusicXML structs + generator
+│   ├── xml.go               # MusicXML structs + generator
+│   ├── xml_test.go          # Unit tests
+│   └── golden_test.go       # In-process golden tests (calls ParseDSL+Generate directly)
 ├── render/
 │   ├── cell.go              # Cell IR types (StyleClass, Cell, CellSeq)
-│   ├── render.go            # Core renderer: buildCells, effective accidental
+│   ├── render.go            # Core renderer: buildCells, NumSlots-based intra-group sustains
 │   ├── ansi.go              # ANSI terminal formatter
 │   └── render_test.go       # Unit tests for renderer
+├── frac/
+│   └── frac.go              # Fraction type, GCD, power-of-2 helpers (shared)
+├── theory/
+│   └── theory.go            # NoteOffsets, FifthsToAccidentalMap, EffectiveAccidental
+├── midi/
+│   ├── generate.go          # SMF generation, voiceToChannel
+│   └── generate_test.go
 ├── test/
 │   └── cases/               # .dsl + .expected.mxml test case files
 ├── lessons/
-│   └── session-2026-06-14.md
+│   ├── session-2026-06-14.md
+│   ├── session-2026-06-17.md
+│   └── session-2026-06-18.md
 ├── AGENTS.md
 ├── README.md
 ├── LICENSE                  # MIT
@@ -183,6 +197,15 @@ Key bindings: space=play/pause, s=stop, [/]=tempo±5, {/}=tempo±1, 0=reset 120,
 ## Essential Commands
 
 ```bash
+make               # Build binary + run all tests (default)
+make build         # Build the m4bon binary only
+make test          # Run all tests (without building binary)
+make check         # Build + test + vet (full pre-commit check)
+make clean         # Remove build artifacts
+make golden        # Update golden test files
+make notify MSG="done"  # Send iMessage notification after long task
+
+# Individual commands (when make is unavailable):
 go build -o m4bon ./cmd/m4bon/  # Build (0.5s) — ALWAYS rebuild after changes
 go test ./...                    # Run all tests (0.4s)
 ./m4bon "c d e f"               # Quick test
@@ -220,6 +243,10 @@ smfBytes, timeline, err := midi.GenerateSMF(measures.Measures, 120)
 | Greedy duration split + barline-aware split | Greedy for non-standard durations; fraction-based barline split (no ticks) runs first to respect the invisible-barline rule |
 | Two-layer render architecture | Core renderer produces `[]Cell` IR (color class, overline, subscript), formatters (ANSI, future HTML) convert independently |
 | No external XML libs | `encoding/xml` covers the subset we need |
+| `NumSlots` field on Event | Tracks intra-group sustain slots for render, guarded by `GroupIdx == gi` so cross-group sustains don't attach dashes |
+| `go vet` with `make check` | `go vet` catches unkeyed struct fields; run `make check` before committing to catch issues early |
+| Makefile with `make build` | `go test ./...` skips `darwin && cgo` TUI code — binary is NOT rebuilt by tests. `make` ensures binary is fresh |
+| Scheduler-less TUI cursor | The `macaudio.Scheduler` approach had subtle timing issues because `Position()` returns `playStartUs` when stopped. Elapsed-time polling via `positionMsg` + `measureAtTime()` is more robust |
 
 ---
 

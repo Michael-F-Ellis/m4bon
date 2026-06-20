@@ -100,7 +100,9 @@ func (m *model) measureView() string {
 			line = line[:m.width-9] + "..."
 		}
 
-		if i == m.startMeasure && i == m.endMeasure {
+		if i == m.currentMeasure && m.isPlaying {
+			b.WriteString(styleIndicator.Render("◉ "))
+		} else if i == m.startMeasure && i == m.endMeasure {
 			b.WriteString(styleIndicator.Render("▶"))
 			b.WriteString(styleEndIndicator.Render("▷"))
 		} else if i == m.startMeasure {

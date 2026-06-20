@@ -67,7 +67,7 @@
         <staff>1</staff>
       </note>
       <note>
-        <chord>true</chord>
+        <chord></chord>
         <pitch>
           <step>F</step>
           <octave>4</octave>
@@ -82,7 +82,7 @@
         <staff>1</staff>
       </note>
       <note>
-        <chord>true</chord>
+        <chord></chord>
         <pitch>
           <step>A</step>
           <octave>4</octave>
@@ -115,7 +115,7 @@
         <staff>1</staff>
       </note>
       <note>
-        <chord>true</chord>
+        <chord></chord>
         <pitch>
           <step>F</step>
           <octave>4</octave>
@@ -132,7 +132,7 @@
         <staff>1</staff>
       </note>
       <note>
-        <chord>true</chord>
+        <chord></chord>
         <pitch>
           <step>A</step>
           <octave>4</octave>
@@ -163,7 +163,7 @@
         <staff>1</staff>
       </note>
       <note>
-        <chord>true</chord>
+        <chord></chord>
         <pitch>
           <step>F</step>
           <octave>4</octave>
@@ -178,7 +178,7 @@
         <staff>1</staff>
       </note>
       <note>
-        <chord>true</chord>
+        <chord></chord>
         <pitch>
           <step>A</step>
           <octave>4</octave>

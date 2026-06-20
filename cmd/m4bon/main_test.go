@@ -95,7 +95,7 @@ func TestCLIChord(t *testing.T) {
 	xml := string(out)
 
 	checks := []string{
-		`<chord>true</chord>`,
+		`<chord></chord>`,
 		`<step>A</step>`,
 		`<step>C</step>`,
 		`<step>E</step>`,

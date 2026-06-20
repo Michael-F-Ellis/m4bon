@@ -193,3 +193,32 @@ func (m *model) cleanup() {
 		os.Remove(m.midiFile)
 	}
 }
+
+// measureAtTime returns the 0-based measure index for the given elapsed time.
+func (m *model) measureAtTime(elapsed time.Duration) int {
+	starts := m.timeline.MeasureStarts
+	// Binary search for the last start <= elapsed
+	lo, hi := 0, len(starts)
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		if starts[mid] <= elapsed {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	result := lo - 1
+	if result < 0 {
+		result = 0
+	}
+	if result >= len(starts) {
+		result = len(starts) - 1
+	}
+	// Clamp within the user's selected range
+	if result < m.startMeasure {
+		result = m.startMeasure
+	} else if result > m.endMeasure {
+		result = m.endMeasure
+	}
+	return result
+}

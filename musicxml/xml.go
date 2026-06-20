@@ -4,10 +4,10 @@ package musicxml
 import (
 	"encoding/xml"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 
+	"github.com/mellis/m4bon/frac"
 	"github.com/mellis/m4bon/parser"
 )
 
@@ -62,8 +62,9 @@ type Clef struct {
 	Line int    `xml:"line"`
 }
 
+// NoteEl ...
 type NoteEl struct {
-	Chord             bool             `xml:"chord,omitempty"`
+	Chord             *struct{}        `xml:"chord,omitempty"`
 	Pitch             *PitchEl         `xml:"pitch,omitempty"`
 	Rest              *RestEl          `xml:"rest,omitempty"`
 	Duration          int              `xml:"duration"`
@@ -126,8 +127,7 @@ type DirectionType struct {
 
 // --- Generator ---
 
-// DPPQ is divisions per quarter note. 480 is standard (MIDI ticks).
-const DPPQ = 480
+const DPPQ = frac.DPPQ
 
 // noteTypeForDuration returns the MusicXML note-type name for a fraction of
 // a whole note.  Returns "" for non-standard durations (tuplets).
@@ -183,7 +183,7 @@ func noteTypeForDuration(f parser.Fraction) string {
 }
 
 func isPowerOf2(n int) bool {
-	return n > 0 && (n&(n-1)) == 0
+	return frac.IsPowerOf2(n)
 }
 
 // dotCount returns the number of augmentation dots for a duration fraction.
@@ -208,12 +208,7 @@ func dotCount(f parser.Fraction) int {
 }
 
 func gcd(a, b int) int {
-	a = int(math.Abs(float64(a)))
-	b = int(math.Abs(float64(b)))
-	for b > 0 {
-		a, b = b, a%b
-	}
-	return a
+	return frac.GCD(a, b)
 }
 
 // makeDots returns a slice of DotEl for the given dot count.
@@ -468,11 +463,13 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 						Duration:   durTicks,
 						Type:       noteType,
 						Dots:       makeDots(dotCount_),
-						Chord:      pIdx > 0,
 						Tie:        ties,
 						Notations:  notations,
 						Voice:      voice,
 						Staff:      1,
+					}
+					if pIdx > 0 {
+						ne.Chord = &struct{}{}
 					}
 					if pIdx == 0 && ev.Nominal != nil {
 						ne.TimeModification = &TimeMod{
@@ -506,7 +503,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 			v := xmlNotes[i].Voice
 			tick := beamVoiceTick[v]
 			nt := xmlNotes[i].Type
-			if !isBeamable(nt) || xmlNotes[i].Chord {
+			if !isBeamable(nt) || xmlNotes[i].Chord != nil {
 				beamVoiceTick[v] = tick + xmlNotes[i].Duration
 				continue
 			}
@@ -516,7 +513,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 			var nextBeatSame bool
 			if i+1 < len(xmlNotes) && xmlNotes[i+1].Voice == v {
 				nextNT := xmlNotes[i+1].Type
-				if isBeamable(nextNT) && !xmlNotes[i+1].Chord {
+				if isBeamable(nextNT) && xmlNotes[i+1].Chord == nil {
 					nextTick := tick + xmlNotes[i].Duration
 					nextBeatPos := (nextTick % beatTicks) / (DPPQ * 4 / meas.TimeDen)
 					nextBeatSame = nextBeatPos == beatPos
@@ -526,7 +523,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 			var prevBeatSame bool
 			if i > 0 && xmlNotes[i-1].Voice == v {
 				prevNT := xmlNotes[i-1].Type
-				if isBeamable(prevNT) && !xmlNotes[i-1].Chord {
+				if isBeamable(prevNT) && xmlNotes[i-1].Chord == nil {
 					prevStart := tick - xmlNotes[i].Duration
 					prevBeatPos := (prevStart % beatTicks) / (DPPQ * 4 / meas.TimeDen)
 					prevBeatSame = prevBeatPos == beatPos
@@ -597,23 +594,4 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 		`<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">` + "\n"
 
 	return header + string(output), nil
-}
-
-// SanitizeDSL strips comments and trims whitespace from DSL text.
-// A comment is a line whose first non-whitespace character is '#' followed
-// by whitespace (or just '#' alone). Bare '#c' is NOT treated as a comment.
-func SanitizeDSL(text string) string {
-	var lines []string
-	for _, line := range strings.Split(text, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		// Check if line is a comment: "#" or "# text" (not "#c", "#&b", etc.)
-		if strings.HasPrefix(trimmed, "#") && (len(trimmed) == 1 || trimmed[1] == ' ') {
-			continue
-		}
-		lines = append(lines, trimmed)
-	}
-	return strings.Join(lines, " ")
 }

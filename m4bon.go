@@ -20,7 +20,7 @@ import (
 // Compile parses m4bon DSL text and returns the MusicXML output as a string.
 // It accepts the same DSL syntax as the m4bon CLI tool.
 func Compile(dsl string) (string, error) {
-	dsl = musicxml.SanitizeDSL(dsl)
+	dsl = parser.SanitizeDSL(dsl)
 	if dsl == "" {
 		return "", fmt.Errorf("empty DSL after sanitization")
 	}
@@ -38,7 +38,7 @@ func Compile(dsl string) (string, error) {
 // in the FQS-inspired format: one measure per line with colored
 // accidentals, octave subscripts, and chord overlines.
 func Render(dsl string) (string, error) {
-	dsl = musicxml.SanitizeDSL(dsl)
+	dsl = parser.SanitizeDSL(dsl)
 	if dsl == "" {
 		return "", fmt.Errorf("empty DSL after sanitization")
 	}
