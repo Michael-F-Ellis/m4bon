@@ -72,6 +72,8 @@ type Event struct {
 	Pitches           []Pitch   // EventChord only
 	Midi              int       // EventNote only; resolved MIDI pitch
 	Midis             []int     // EventChord only; resolved MIDI pitches
+	ResolvedOctave    int       // EventNote only; resolved octave (midi/12 convention)
+	ResolvedOctaves   []int     // EventChord only; resolved octaves parallel to Midis
 	EffAccidental     int       // effective accidental including measure-level persistence (for alter/render)
 	Split             bool      // continuation from splitNonStandardDurations or barline split
 	TieNext           bool      // cross-measure tie to next measure's first note

@@ -250,6 +250,11 @@ smfBytes, timeline, err := midi.GenerateSMF(measures.Measures, 120)
 | `GroupSlots` for cross-group sustain render | `GroupSlots []int` on `MeasureResult` tracks per-group slot count. Render computes `startSustains = slotCount - nonSplitCount - intraGroupSustains` — cross-group sustains that leave no Event are still visible as dashes |
 | `EffAccidental` separate from `Accidental` | `EffAccidental` stores the effective accidental (including measure-level persistence). `Accidental` stores the raw DSL value. MusicXML uses `Accidental` for printed accidental symbols and `EffAccidental` for `<alter>`. Render uses `EffAccidental` for note style color |
 | Sustain events must not carry `OctaveShift` | Three sustain-creation paths (pure-group, mixed-group, voice-poly) all set `OctaveShift: 0` — a sustain continues the same pitch, not a shifted one |
+| Diatonic-only octave resolution | Pitch identity (letter + accidental + octave) resolved via diatonic step distance (`resolveOctave`, `nextHigherOctave`), never MIDI semitones. `midiFromPitch` is a one-way lookup, never used for decisions |
+| `ResolvedOctave` / `ResolvedOctaves` on Event | Octave stored alongside `Midi`/`Midis` during resolution. MusicXML and render consume it directly, bypassing `midi/12` reverse-engineering |
+| Leap detection from octave marks only | Lilypond rule guarantees no leap > 4th without `^`/`/`. `leapFromShift(OctaveShift)` replaces complex interval computation |
+| File watching via `tea.Every` restart loop | BubbleTea's `tea.Every` fires once; file polling requires returning a non-nil message from the callback and restarting the timer from `Update` |
+| TUI subscript toggle (`o` key) | Subscripts default off in TUI; `showSubscripts` threaded through `render.Render → BuildCells → octaveSubscript` |
 
 ---
 

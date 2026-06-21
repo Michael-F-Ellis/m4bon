@@ -13,7 +13,8 @@ import (
 
 // Run starts the TUI application with the given DSL text and label.
 // If dslText is empty, it starts in a non-functional state showing no measures.
-func Run(dslText, label string, bpm float64) error {
+// asciiLeaps controls whether leap indicators use ANSI escapes or Unicode diacritics.
+func Run(dslText, label string, bpm float64, asciiLeaps bool) error {
 	if dslText == "" {
 		// Empty state - just show the TUI with no music loaded
 		emptyMeasures := []parser.MeasureResult{
@@ -23,7 +24,7 @@ func Run(dslText, label string, bpm float64) error {
 		if err != nil {
 			return fmt.Errorf("generate SMF: %w", err)
 		}
-		m := initialModel("", label, emptyMeasures, smfBytes, tl)
+		m := initialModel("", label, emptyMeasures, smfBytes, tl, asciiLeaps)
 		m.smfBytes = nil // no SMF in empty state
 		p := tea.NewProgram(m, tea.WithAltScreen())
 		m.program = p
@@ -52,7 +53,7 @@ func Run(dslText, label string, bpm float64) error {
 	}
 
 	// Create model and load MIDI player
-	m := initialModel(sanitized, label, result.Measures, smfBytes, tl)
+	m := initialModel(sanitized, label, result.Measures, smfBytes, tl, asciiLeaps)
 
 	// Load MIDI player in background
 	if err := m.loadMIDIPlayer(); err != nil {

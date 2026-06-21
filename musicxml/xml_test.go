@@ -63,36 +63,8 @@ func TestSanitizeDSL(t *testing.T) {
 	}
 }
 
-func TestMidiToStep(t *testing.T) {
-	cases := []struct {
-		midi     int
-		step     string
-		octave   int
-		alter    int
-	}{
-		{60, "C", 4, 0},
-		{61, "C", 4, 1},
-		{62, "D", 4, 0},
-		{63, "D", 4, 1},
-		{64, "E", 4, 0},
-		{65, "F", 4, 0},
-		{66, "F", 4, 1},
-		{67, "G", 4, 0},
-		{68, "G", 4, 1},
-		{69, "A", 4, 0},
-		{70, "A", 4, 1},
-		{71, "B", 4, 0},
-		{72, "C", 5, 0},
-		{0, "C", -1, 0},
-		{127, "G", 9, 0},
-	}
-	for _, tc := range cases {
-		step, oct, alter := midiToStep(tc.midi)
-		if step != tc.step || oct != tc.octave || alter != tc.alter {
-			t.Errorf("midiToStep(%d) = (%s, %d, %d), want (%s, %d, %d)",
-				tc.midi, step, oct, alter, tc.step, tc.octave, tc.alter)
-		}
-	}
+func TestMidiFromPitch(t *testing.T) {
+	// Tests moved to parser package since midiFromPitch lives there
 }
 
 func TestAccidentalString(t *testing.T) {
@@ -210,12 +182,16 @@ func TestGenerateSingleMeasureNotes(t *testing.T) {
 		ev := &measures[0].Events[i]
 		if ev.Letter == "c" {
 			ev.Midi = 60
+			ev.ResolvedOctave = 5
 		} else if ev.Letter == "d" {
 			ev.Midi = 62
+			ev.ResolvedOctave = 5
 		} else if ev.Letter == "e" {
 			ev.Midi = 64
+			ev.ResolvedOctave = 5
 		} else if ev.Letter == "f" {
 			ev.Midi = 65
+			ev.ResolvedOctave = 5
 		}
 	}
 

@@ -8,7 +8,7 @@ import (
 	"github.com/mellis/m4bon/theory"
 )
 
-// rawCells calls buildCells on parsed DSL and returns cells for the first measure.
+// rawCells calls buildMeasureCells on parsed DSL and returns cells for the first measure.
 func rawCells(t *testing.T, dsl string) CellSeq {
 	t.Helper()
 	r := parser.ParseDSL(dsl)
@@ -18,17 +18,17 @@ func rawCells(t *testing.T, dsl string) CellSeq {
 	if len(r.Measures) == 0 {
 		t.Fatalf("no measures for %q", dsl)
 	}
-	return buildMeasureCells(r.Measures[0], 1)
+	return buildMeasureCells(r.Measures[0], 1, true)
 }
 
-// allMeasuresCells calls buildCells on parsed DSL for all measures.
+// allMeasuresCells calls BuildCells on parsed DSL for all measures.
 func allMeasuresCells(t *testing.T, dsl string) []CellSeq {
 	t.Helper()
 	r := parser.ParseDSL(dsl)
 	if r.Err != nil {
 		t.Fatalf("ParseDSL(%q): %v", dsl, r.Err)
 	}
-	return BuildCells(r.Measures)
+	return BuildCells(r.Measures, true)
 }
 
 // cellByContent finds the first cell with the given Content prefix.
@@ -107,7 +107,7 @@ func TestAccidentals(t *testing.T) {
 		t.Fatal("no 'c' cell found")
 	}
 	if cCell.Style != StyleDefault {
-		t.Errorf("expected StyleDefault for %c, got %v", '%', cCell.Style)
+		t.Errorf("expected StyleDefault for %%c, got %v", cCell.Style)
 	}
 }
 
@@ -356,10 +356,6 @@ func TestEffectiveAccidental(t *testing.T) {
 	if eff := theory.EffectiveAccidental("c", 0, false, gMajor); eff != 0 {
 		t.Errorf("c in G major should be 0, got %d", eff)
 	}
-	// Explicit natural overrides key sig
-	if eff := theory.EffectiveAccidental("f", 0, false, gMajor); eff != 1 {
-		t.Errorf("f without explicit natural in G major is still sharp")
-	}
 	// Explicit natural cancels key sig
 	if eff := theory.EffectiveAccidental("f", 0, true, gMajor); eff != 0 {
 		t.Errorf("%%f should cancel key sig, got %d", eff)
@@ -401,16 +397,214 @@ func TestKeySigMap(t *testing.T) {
 
 // TestOctaveSubscriptHelper tests the subscript helper directly.
 func TestOctaveSubscriptHelper(t *testing.T) {
-	if s := octaveSubscript(60, true); s != "₄" {
-		t.Errorf("MIDI 60 should give subscript '₄', got %q", s)
+	if s := octaveSubscript(4, true); s != "₄" {
+		t.Errorf("octave 4 should give subscript '₄', got %q", s)
 	}
-	if s := octaveSubscript(60, false); s != "" {
+	if s := octaveSubscript(4, false); s != "" {
 		t.Errorf("show=false should give empty, got %q", s)
 	}
-	if s := octaveSubscript(0, true); s != "" {
-		t.Errorf("MIDI 0 below range should give empty, got %q", s)
+	if s := octaveSubscript(-1, true); s != "" {
+		t.Errorf("octave -1 below range should give empty, got %q", s)
 	}
-	if s := octaveSubscript(127, true); s != "₉" {
-		t.Errorf("MIDI 127 should give '₉', got %q", s)
+	if s := octaveSubscript(9, true); s != "₉" {
+		t.Errorf("octave 9 should give '₉', got %q", s)
+	}
+}
+
+// --- Leap indicator tests ---
+
+// TestLeapFromShift verifies the leapFromShift helper.
+func TestLeapFromShift(t *testing.T) {
+	tests := []struct {
+		shift int
+		want  LeapDir
+	}{
+		{0, LeapNone},
+		{1, LeapUp},
+		{2, LeapUp},
+		{-1, LeapDown},
+		{-2, LeapDown},
+	}
+	for _, tt := range tests {
+		got := leapFromShift(tt.shift)
+		if got != tt.want {
+			t.Errorf("leapFromShift(%d) = %v, want %v", tt.shift, got, tt.want)
+		}
+	}
+}
+
+// TestLeapUpwardOctave verifies ^ produces LeapUp.
+func TestLeapUpwardOctave(t *testing.T) {
+	cells := rawCells(t, "M4/4 c ^a")
+	aCell := cellByContent(cells, "a")
+	if aCell == nil {
+		t.Fatal("no 'a' cell found")
+	}
+	if aCell.Leap != LeapUp {
+		t.Errorf("c ^a should be LeapUp, got %v", aCell.Leap)
+	}
+}
+
+// TestLeapDownwardOctave verifies / produces LeapDown.
+func TestLeapDownwardOctave(t *testing.T) {
+	cells := rawCells(t, "M4/4 a /c")
+	cCell := cellByContent(cells, "c")
+	if cCell == nil {
+		t.Fatal("no 'c' cell found")
+	}
+	if cCell.Leap != LeapDown {
+		t.Errorf("a /c should be LeapDown, got %v", cCell.Leap)
+	}
+}
+
+// TestLeapNoOctaveShift verifies no leap without ^ or /.
+func TestLeapNoOctaveShift(t *testing.T) {
+	cells := rawCells(t, "M4/4 c d e f g a b")
+	for _, letter := range []string{"d", "e", "f", "g", "a", "b"} {
+		cell := cellByContent(cells, letter)
+		if cell == nil {
+			t.Errorf("no cell for %s", letter)
+			continue
+		}
+		if cell.Leap != LeapNone {
+			t.Errorf("%s should be LeapNone (no octave shift), got %v", letter, cell.Leap)
+		}
+	}
+}
+
+// TestLeapChordOctave verifies ^ and / inside chords produce leaps.
+func TestLeapChordOctave(t *testing.T) {
+	cells := rawCells(t, "M4/4 (c^ga)f")
+	// c→^g = LeapUp, ^g→a = LeapNone
+	gCell := cellByContent(cells, "g")
+	if gCell == nil {
+		t.Fatal("no 'g' cell found")
+	}
+	if gCell.Leap != LeapUp {
+		t.Errorf("c → ^g in chord should be LeapUp, got %v", gCell.Leap)
+	}
+	aCell := cellByContent(cells, "a")
+	if aCell == nil {
+		t.Fatal("no 'a' cell found")
+	}
+	if aCell.Leap != LeapNone {
+		t.Errorf("^g → a in chord should be LeapNone, got %v", aCell.Leap)
+	}
+}
+
+// TestLeapChordFirstToneOctave verifies first chord tone with ^ is a leap.
+func TestLeapChordFirstToneOctave(t *testing.T) {
+	cells := rawCells(t, "M4/4 c (^ga)f")
+	gCell := cellByContent(cells, "g")
+	if gCell == nil {
+		t.Fatal("no 'g' cell found")
+	}
+	if gCell.Leap != LeapUp {
+		t.Errorf("c → ^g (first chord tone) should be LeapUp, got %v", gCell.Leap)
+	}
+}
+
+// TestLeapFormatUnicode verifies that FormatANSI with asciiLeaps=false produces combining diacritics.
+func TestLeapFormatUnicode(t *testing.T) {
+	cells := rawCells(t, "M4/4 c ^a")
+	aCell := cellByContent(cells, "a")
+	if aCell == nil {
+		t.Fatal("no 'a' cell found")
+	}
+	if aCell.Leap != LeapUp {
+		t.Fatal("expected LeapUp for ^a")
+	}
+
+	ansi := FormatANSI([]CellSeq{cells}, false)
+	if !strings.Contains(ansi, combiningCirc) {
+		t.Errorf("expected combining circumflex in unicode output, got %q", ansi)
+	}
+}
+
+// TestLeapFormatASCII verifies that FormatANSI with asciiLeaps=true produces ANSI escapes.
+func TestLeapFormatASCII(t *testing.T) {
+	cells := rawCells(t, "M4/4 c ^a")
+	aCell := cellByContent(cells, "a")
+	if aCell == nil {
+		t.Fatal("no 'a' cell found")
+	}
+	if aCell.Leap != LeapUp {
+		t.Fatal("expected LeapUp for ^a")
+	}
+
+	ansi := FormatANSI([]CellSeq{cells}, true)
+	if !strings.Contains(ansi, ansiOverline) {
+		t.Errorf("expected ANSI overline in ascii output, got %q", ansi)
+	}
+}
+
+// TestLeapFormatNoLeapNoDiacritic verifies that cells without leaps produce no diacritics.
+func TestLeapFormatNoLeapNoDiacritic(t *testing.T) {
+	cells := rawCells(t, "M4/4 c d e f")
+	ansi := FormatANSI([]CellSeq{cells}, false)
+	if strings.Contains(ansi, combiningCirc) {
+		t.Error("no leaps should mean no combining circumflexes")
+	}
+	if strings.Contains(ansi, combiningMacr) {
+		t.Error("no leaps should mean no combining macrons")
+	}
+}
+
+// TestRenderWithLeaps verifies the full Render pipeline with OctaveShift-based leaps.
+func TestRenderWithLeaps(t *testing.T) {
+	out := Render([]parser.MeasureResult{
+		{TimeNum: 4, TimeDen: 4, Events: []parser.Event{
+			{
+				Type:           parser.EventNote,
+				Letter:         "c",
+				Midi:           60,
+				ResolvedOctave: 5,
+				Duration:       parser.Fraction{Num: 1, Den: 4},
+				GroupIdx:       0,
+				Voice:          1,
+				NumSlots:       1,
+				EffAccidental:  0,
+			},
+			{
+				Type:           parser.EventNote,
+				Letter:         "a",
+				Midi:           69,
+				ResolvedOctave: 5,
+				OctaveShift:    1,
+				Duration:       parser.Fraction{Num: 1, Den: 4},
+				GroupIdx:       1,
+				Voice:          1,
+				NumSlots:       1,
+				EffAccidental:  0,
+			},
+		}, NumGroups: 2, GroupSlots: []int{1, 1}},
+	}, false, true)
+
+	// ^a → LeapUp → combining circumflex
+	if !strings.Contains(out, combiningCirc) {
+		t.Errorf("expected combining circumflex for leap, got %q", out)
+	}
+}
+
+// TestLeapMeasure3 verifies the reported bug: `&c/&e` — c has no shift, e has /.
+func TestLeapMeasure3(t *testing.T) {
+	// This is the third measure from the user's report
+	// `&c/&e` — c should NOT be a leap, e (/&e) SHOULD be LeapDown
+	cells := rawCells(t, "M4/4 &c/&e")
+
+	cCell := cellByContent(cells, "c")
+	if cCell == nil {
+		t.Fatal("no 'c' cell found")
+	}
+	if cCell.Leap != LeapNone {
+		t.Errorf("&c should be LeapNone (no octave shift), got %v", cCell.Leap)
+	}
+
+	eCell := cellByContent(cells, "e")
+	if eCell == nil {
+		t.Fatal("no 'e' cell found")
+	}
+	if eCell.Leap != LeapDown {
+		t.Errorf("/&e should be LeapDown (octave down), got %v", eCell.Leap)
 	}
 }

@@ -13,22 +13,24 @@ const TicksPerWholeNote = frac.TicksPerWholeNote
 
 // Render produces the colorized text output for a sequence of measures.
 // Returns one line per measure with ANSI escape codes for colors.
-func Render(measures []parser.MeasureResult) string {
-	cellMeasures := BuildCells(measures)
-	return FormatANSI(cellMeasures)
+// asciiLeaps uses ANSI overline/underline instead of Unicode combining diacritics.
+// showSubscripts controls whether octave subscripts are rendered.
+func Render(measures []parser.MeasureResult, asciiLeaps bool, showSubscripts bool) string {
+	cellMeasures := BuildCells(measures, showSubscripts)
+	return FormatANSI(cellMeasures, asciiLeaps)
 }
 
 // BuildCells converts measures into the intermediate Cell representation,
 // one CellSeq per measure. The core rendering logic lives here — it is
 // independent of any output format (terminal, HTML, etc.).
-func BuildCells(measures []parser.MeasureResult) []CellSeq {
+func BuildCells(measures []parser.MeasureResult, showSubscripts bool) []CellSeq {
 	result := make([]CellSeq, 0, len(measures))
 	offset := 1
 	if len(measures) > 0 && measures[0].IsPickup {
 		offset = 0
 	}
 	for mi, m := range measures {
-		cells := buildMeasureCells(m, mi+offset)
+		cells := buildMeasureCells(m, mi+offset, showSubscripts)
 		result = append(result, cells)
 	}
 	return result
@@ -42,7 +44,7 @@ type eventGroup struct {
 
 // buildMeasureCells produces cells for a single measure, including the
 // measure-number prefix.
-func buildMeasureCells(m parser.MeasureResult, measureNum int) CellSeq {
+func buildMeasureCells(m parser.MeasureResult, measureNum int, showSubscripts bool) CellSeq {
 	var cells CellSeq
 
 	// Measure number prefix: "N:  "
@@ -94,7 +96,7 @@ func buildMeasureCells(m parser.MeasureResult, measureNum int) CellSeq {
 				if ev.Split {
 					continue // notational tie, not a user-visible sustain
 				}
-				eventCells := eventToCells(ev, keyAcc, firstInMeasure)
+				eventCells := eventToCells(ev, keyAcc, firstInMeasure, showSubscripts)
 				cells = append(cells, eventCells...)
 				if (ev.Type == parser.EventNote || ev.Type == parser.EventChord) && !ev.Split {
 					firstInMeasure = false
@@ -140,7 +142,8 @@ func groupEventsByGroupIdx(events []parser.Event) []eventGroup {
 }
 
 // eventToCells converts a single event into one or more cells.
-func eventToCells(ev parser.Event, keyAcc map[string]int, firstInMeasure bool) []Cell {
+// Leaps are indicated by OctaveShift: ^ → LeapUp, / → LeapDown.
+func eventToCells(ev parser.Event, keyAcc map[string]int, firstInMeasure bool, showSubscripts bool) []Cell {
 	switch ev.Type {
 	case parser.EventRest:
 		return []Cell{{Content: ";", Style: StyleSustainRest}}
@@ -149,9 +152,9 @@ func eventToCells(ev parser.Event, keyAcc map[string]int, firstInMeasure bool) [
 		if ev.Split {
 			return []Cell{{Content: "-", Style: StyleSustainRest}}
 		}
-		style := noteStyle(ev.Letter, ev.EffAccidental, false, keyAcc)
-		sub := octaveSubscript(ev.Midi, firstInMeasure || ev.OctaveShift != 0)
-		return []Cell{{Content: ev.Letter, Style: style, Subscript: sub}}
+		style := noteStyle(ev.Letter, ev.EffAccidental, ev.ExplicitNatural, keyAcc)
+		sub := octaveSubscript(ev.ResolvedOctave-1, showSubscripts && (firstInMeasure || ev.OctaveShift != 0))
+		return []Cell{{Content: ev.Letter, Style: style, Subscript: sub, Leap: leapFromShift(ev.OctaveShift)}}
 
 	case parser.EventChord:
 		if ev.Split {
@@ -171,7 +174,7 @@ func eventToCells(ev parser.Event, keyAcc map[string]int, firstInMeasure bool) [
 			style := noteStyle(p.Letter, p.Accidental, p.ExplicitNatural, keyAcc)
 			sub := ""
 			if i == 0 && len(ev.Midis) > 0 {
-				sub = octaveSubscript(ev.Midis[0], needSub)
+				sub = octaveSubscript(ev.ResolvedOctaves[0]-1, showSubscripts && needSub)
 			}
 			if i == 0 {
 				// Opening paren for chord group
@@ -182,6 +185,7 @@ func eventToCells(ev parser.Event, keyAcc map[string]int, firstInMeasure bool) [
 				Style:     style,
 				Italic:    true,
 				Subscript: sub,
+				Leap:      leapFromShift(p.OctaveShift),
 			})
 			if i == len(ev.Pitches)-1 {
 				// Closing paren for chord group
@@ -191,6 +195,18 @@ func eventToCells(ev parser.Event, keyAcc map[string]int, firstInMeasure bool) [
 		return cells
 	}
 	return nil
+}
+
+// leapFromShift converts an OctaveShift value to a LeapDir.
+// ^ (positive) → LeapUp, / (negative) → LeapDown, 0 → LeapNone.
+func leapFromShift(shift int) LeapDir {
+	if shift > 0 {
+		return LeapUp
+	}
+	if shift < 0 {
+		return LeapDown
+	}
+	return LeapNone
 }
 
 // noteStyle determines the style class for a pitch based on its effective
@@ -213,17 +229,16 @@ func noteStyle(letter string, explicitAcc int, explicitNatural bool, keyAcc map[
 
 
 
-// octaveSubscript returns the Unicode subscript string for the given MIDI
-// pitch, or empty string if show is false or the octave is out of range.
-func octaveSubscript(midi int, show bool) string {
+// octaveSubscript returns the Unicode subscript string for the given MusicXML
+// octave, or empty string if show is false or the octave is out of range.
+func octaveSubscript(mxlOctave int, show bool) string {
 	if !show {
 		return ""
 	}
-	oct := midi/12 - 1
-	if oct < 0 || oct > 9 {
+	if mxlOctave < 0 || mxlOctave > 9 {
 		return ""
 	}
-	return subscriptDigit(oct)
+	return subscriptDigit(mxlOctave)
 }
 
 // subscriptDigit returns the Unicode subscript character for a digit 0-9.

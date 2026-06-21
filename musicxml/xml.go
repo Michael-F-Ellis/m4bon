@@ -227,40 +227,6 @@ func durationToTicks(f parser.Fraction) int {
 	return (DPPQ * 4 * f.Num) / f.Den
 }
 
-// midiToStep converts a MIDI note number to MusicXML step + octave + alter.
-func midiToStep(midi int) (step string, octave int, alter int) {
-	// MIDI 60 = C4 in MusicXML
-	octave = midi/12 - 1
-	noteInOctave := midi % 12
-	switch noteInOctave {
-	case 0:
-		return "C", octave, 0
-	case 1:
-		return "C", octave, 1
-	case 2:
-		return "D", octave, 0
-	case 3:
-		return "D", octave, 1
-	case 4:
-		return "E", octave, 0
-	case 5:
-		return "F", octave, 0
-	case 6:
-		return "F", octave, 1
-	case 7:
-		return "G", octave, 0
-	case 8:
-		return "G", octave, 1
-	case 9:
-		return "A", octave, 0
-	case 10:
-		return "A", octave, 1
-	case 11:
-		return "B", octave, 0
-	}
-	return "C", 4, 0
-}
-
 // accidentalString maps the parser's accidental value to a MusicXML accidental element value.
 func accidentalString(acc int) string {
 	switch acc {
@@ -410,7 +376,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 			switch ev.Type {
 			case parser.EventNote:
 				letter := strings.ToUpper(ev.Letter)
-				midiOct := ev.Midi / 12
+				mxlOct := ev.ResolvedOctave - 1 // MusicXML octave convention
 
 				accidentalDisplay := accidentalString(ev.Accidental)
 				if accidentalDisplay == "" && ev.EffAccidental == 0 {
@@ -426,7 +392,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 				}
 
 				ne := NoteEl{
-					Pitch:      &PitchEl{Step: letter, Octave: midiOct - 1, Alter: ev.EffAccidental},
+					Pitch:      &PitchEl{Step: letter, Octave: mxlOct, Alter: ev.EffAccidental},
 					Duration:   durTicks,
 					Type:       noteType,
 					Dots:       makeDots(dotCount_),
@@ -456,10 +422,15 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 				entries = append(entries, noteEntry{tick, ne})
 
 			case parser.EventChord:
-				for pIdx, midi := range ev.Midis {
-					step, oct, alter := midiToStep(midi)
+				for pIdx := range ev.Pitches {
+					p := ev.Pitches[pIdx]
+					letter := strings.ToUpper(p.Letter)
+					oct := 0
+					if pIdx < len(ev.ResolvedOctaves) {
+						oct = ev.ResolvedOctaves[pIdx] - 1 // MusicXML convention
+					}
 					ne := NoteEl{
-						Pitch:      &PitchEl{Step: step, Octave: oct, Alter: alter},
+						Pitch:      &PitchEl{Step: letter, Octave: oct, Alter: p.Accidental},
 						Duration:   durTicks,
 						Type:       noteType,
 						Dots:       makeDots(dotCount_),

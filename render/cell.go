@@ -17,12 +17,22 @@ const (
 	StyleParen                         // medium-dark grey — rgb(120, 120, 120)
 )
 
+// LeapDir indicates whether a pitch is involved in a melodic leap.
+type LeapDir int
+
+const (
+	LeapNone LeapDir = iota // no leap
+	LeapUp                  // upward leap > 4th → circumflex
+	LeapDown                // downward leap > 4th → macron below
+)
+
 // Cell describes a single glyph to render.
 type Cell struct {
 	Content   string     // the character(s) to display (e.g. "c", "-", ";")
 	Style     StyleClass // color/style classification
 	Italic    bool       // render in italic (used for chord tones)
 	Subscript string     // octave subscript text, empty if none (e.g. "4")
+	Leap      LeapDir    // leap direction for this pitch
 }
 
 // CellSeq is a sequence of cells for one measure.

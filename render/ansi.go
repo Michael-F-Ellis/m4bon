@@ -6,7 +6,11 @@ import (
 
 // ANSI escape code constants.
 const (
-	ansiReset = "\033[0m"
+	ansiReset     = "\033[0m"
+	combiningCirc = "\u0302" // combining circumflex accent — upward leap
+	combiningMacr = "\u0331" // combining macron below — downward leap
+	ansiOverline  = "\033[53m"
+	ansiUnderline = "\033[4m"
 )
 
 // ansiColor returns the ANSI 24-bit color escape for a StyleClass.
@@ -31,24 +35,55 @@ func ansiColor(s StyleClass) string {
 
 // FormatANSI converts a sequence of measure cell-sequences into an
 // ANSI-escaped string. Each measure becomes one line.
-func FormatANSI(measures []CellSeq) string {
+// asciiLeaps uses ANSI overline/underline for leap indicators instead
+// of Unicode combining diacritics.
+func FormatANSI(measures []CellSeq, asciiLeaps bool) string {
 	var b strings.Builder
 	for _, cells := range measures {
 		for _, c := range cells {
-			content := c.Content + c.Subscript
+			baseContent := c.Content
+			subscript := c.Subscript
+
+			// Unicode combining diacritic is placed after the base letter
+			// but before the subscript for correct rendering.
+			var unicodeLeap string
+			if !asciiLeaps {
+				switch c.Leap {
+				case LeapUp:
+					unicodeLeap = combiningCirc
+				case LeapDown:
+					unicodeLeap = combiningMacr
+				}
+			}
+
+			// ANSI leap escapes wrap the entire content
+			var leapPrefix string
+			if asciiLeaps {
+				switch c.Leap {
+				case LeapUp:
+					leapPrefix = ansiOverline
+				case LeapDown:
+					leapPrefix = ansiUnderline
+				}
+			}
 
 			// Apply ANSI escapes
-			if c.Style != StyleDefault {
-				b.WriteString(ansiColor(c.Style))
-			}
-			if c.Italic {
-				b.WriteString("\033[3m")
-			}
-			if c.Style != StyleDefault || c.Italic {
-				b.WriteString(content)
+			if c.Style != StyleDefault || c.Italic || leapPrefix != "" {
+				b.WriteString(leapPrefix)
+				if c.Style != StyleDefault {
+					b.WriteString(ansiColor(c.Style))
+				}
+				if c.Italic {
+					b.WriteString("\033[3m")
+				}
+				b.WriteString(baseContent)
+				b.WriteString(unicodeLeap)
+				b.WriteString(subscript)
 				b.WriteString(ansiReset)
 			} else {
-				b.WriteString(content)
+				b.WriteString(baseContent)
+				b.WriteString(unicodeLeap)
+				b.WriteString(subscript)
 			}
 		}
 	}
@@ -56,7 +91,7 @@ func FormatANSI(measures []CellSeq) string {
 }
 
 // FormatPlain converts a sequence of measure cell-sequences into plain text
-// (no ANSI escapes). Useful for tests and for deriving text from the IR.
+// (no ANSI escapes, no combining diacritics). Useful for tests.
 func FormatPlain(measures []CellSeq) string {
 	var b strings.Builder
 	for _, cells := range measures {

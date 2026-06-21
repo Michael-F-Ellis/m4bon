@@ -3,8 +3,11 @@
 package tui
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/Michael-F-Ellis/macaudio"
+	"github.com/mellis/m4bon/render"
 )
 
 // Message types for BubbleTea.
@@ -55,6 +58,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.elapsedTick()
 		}
 		return m, nil
+
+	case fileChangedMsg:
+		if m.isPlaying {
+			return m, m.watchFileTick()
+		}
+		m.sourceFileMod = msg.modTime
+		if err := m.reloadMeasures(); err != "" {
+			// Error silently ignored — score stays as-is
+		}
+		return m, m.watchFileTick()
+
+	case watchTickMsg:
+		return m, m.watchFileTick()
 
 	case tea.QuitMsg:
 		m.quitting = true
@@ -123,6 +139,11 @@ func (m *model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k":
 		return m.handleScroll(-1)
 
+	case "o":
+		return m.handleSubscriptsToggle()
+
+	case "u":
+		return m.handleReload()
 	}
 
 	return m, nil
@@ -241,6 +262,28 @@ func (m *model) handleSeekMeasure(delta int) (tea.Model, tea.Cmd) {
 	seekTime := m.timeline.MeasureStarts[newIdx]
 	m.midiPlayer.Seek(seekTime)
 	m.elapsed = seekTime
+	return m, nil
+}
+
+func (m *model) handleSubscriptsToggle() (tea.Model, tea.Cmd) {
+	m.showSubscripts = !m.showSubscripts
+	// Re-render with current subscript setting
+	ansiOutput := render.Render(m.measures, m.asciiLeaps, m.showSubscripts)
+	renderLines := strings.Split(ansiOutput, "\n")
+	if len(renderLines) > 0 && renderLines[len(renderLines)-1] == "" {
+		renderLines = renderLines[:len(renderLines)-1]
+	}
+	m.renderLines = renderLines
+	return m, nil
+}
+
+func (m *model) handleReload() (tea.Model, tea.Cmd) {
+	if m.isPlaying {
+		return m, nil
+	}
+	if err := m.reloadMeasures(); err != "" {
+		// Error silently ignored — score stays as-is
+	}
 	return m, nil
 }
 

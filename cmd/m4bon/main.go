@@ -27,6 +27,7 @@ func main() {
 	inputFile := flag.String("f", "", "Read DSL from file instead of argument")
 	outputFile := flag.String("o", "", "Write MusicXML to file instead of stdout")
 	renderFlag := flag.Bool("render", false, "Output colorized text format instead of MusicXML")
+	asciiLeaps := flag.Bool("ascii-leaps", false, "Use ANSI escapes for leap indicators instead of Unicode diacritics")
 	tuiFlag := flag.Bool("tui", false, "Launch the interactive TUI performance/learning tool")
 	bpmFlag := flag.Float64("bpm", 120, "Tempo in beats per minute (for TUI mode)")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
@@ -77,7 +78,7 @@ func main() {
 	// TUI mode
 	if *tuiFlag {
 		dsl = parser.SanitizeDSL(dsl)
-		err := tui.Run(dsl, dslLabel, *bpmFlag)
+		err := tui.Run(dsl, dslLabel, *bpmFlag, *asciiLeaps)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 			os.Exit(1)
@@ -103,7 +104,7 @@ func main() {
 	}
 
 	if *renderFlag {
-		out := render.Render(result.Measures)
+		out := render.Render(result.Measures, *asciiLeaps, true)
 		if *outputFile != "" {
 			if err := os.WriteFile(*outputFile, []byte(out), 0644); err != nil {
 				fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", *outputFile, err)

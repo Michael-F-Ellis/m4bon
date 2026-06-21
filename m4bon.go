@@ -37,7 +37,16 @@ func Compile(dsl string) (string, error) {
 // Render parses m4bon DSL text and returns colorized text output
 // in the FQS-inspired format: one measure per line with colored
 // accidentals, octave subscripts, and chord overlines.
+// Leap indicators use Unicode combining diacritics by default.
 func Render(dsl string) (string, error) {
+	return RenderOptions(dsl, false)
+}
+
+// RenderOptions parses DSL text and returns colorized output with
+// configurable leap indicator rendering.
+// asciiLeaps uses ANSI escapes (overline/underline) instead of
+// Unicode combining diacritics for leap indicators.
+func RenderOptions(dsl string, asciiLeaps bool) (string, error) {
 	dsl = parser.SanitizeDSL(dsl)
 	if dsl == "" {
 		return "", fmt.Errorf("empty DSL after sanitization")
@@ -49,5 +58,5 @@ func Render(dsl string) (string, error) {
 	if len(result.Measures) == 0 {
 		return "", fmt.Errorf("no events produced")
 	}
-	return render.Render(result.Measures), nil
+	return render.Render(result.Measures, asciiLeaps, true), nil
 }

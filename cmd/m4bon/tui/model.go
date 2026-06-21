@@ -56,23 +56,35 @@ type model struct {
 	recording   *macaudio.Recording
 
 	// UI state
-	width         int
-	height        int
-	viewportStart int // scroll offset for measure lines
-	showHelp      bool
-	quitting      bool
+	width          int
+	height         int
+	viewportStart  int    // scroll offset for measure lines
+	showHelp       bool
+	showSubscripts bool   // toggled by 'o', default off
+	asciiLeaps     bool   // from CLI flag
+	quitting       bool
+
+	// File watching
+	sourceFile    string    // path to .dsl file (empty if from arg)
+	sourceFileMod time.Time // last known mtime of source file
 
 	// Time display
 	elapsed time.Duration
 }
 
-func initialModel(dslText, dslLabel string, measures []parser.MeasureResult, smfBytes []byte, tl midi.Timeline) *model {
+func initialModel(dslText, dslLabel string, measures []parser.MeasureResult, smfBytes []byte, tl midi.Timeline, asciiLeaps bool) *model {
 	// Generate ANSI-colored render lines using the same render pipeline as -render
-	ansiOutput := render.Render(measures)
+	ansiOutput := render.Render(measures, asciiLeaps, false) // subscripts off by default
 	renderLines := strings.Split(ansiOutput, "\n")
 	// Remove trailing empty line from split
 	if len(renderLines) > 0 && renderLines[len(renderLines)-1] == "" {
 		renderLines = renderLines[:len(renderLines)-1]
+	}
+
+	// Determine if we're watching a file
+	sourceFile := ""
+	if dslLabel != "" && dslLabel != "arg" && dslLabel != "untitled" {
+		sourceFile = dslLabel
 	}
 
 	m := &model{
@@ -87,10 +99,19 @@ func initialModel(dslText, dslLabel string, measures []parser.MeasureResult, smf
 		transport:       macaudio.NewTransport(),
 		startMeasure:    0,
 		currentMeasure:  0,
+		asciiLeaps:      asciiLeaps,
+		sourceFile:      sourceFile,
 	}
 
 	if len(measures) > 0 {
 		m.endMeasure = len(measures) - 1
+	}
+
+	// Record initial mtime if watching a file
+	if sourceFile != "" {
+		if info, err := os.Stat(sourceFile); err == nil {
+			m.sourceFileMod = info.ModTime()
+		}
 	}
 
 	return m
@@ -98,7 +119,7 @@ func initialModel(dslText, dslLabel string, measures []parser.MeasureResult, smf
 
 // Init initializes the BubbleTea program.
 func (m *model) Init() tea.Cmd {
-	return nil
+	return m.watchFileTick()
 }
 
 // loadMIDIPlayer creates a temp file, writes SMF bytes, and loads into MIDIPlayer.
@@ -221,4 +242,86 @@ func (m *model) measureAtTime(elapsed time.Duration) int {
 		result = m.endMeasure
 	}
 	return result
+}
+
+// fileChangedMsg is sent when the watched source file changes on disk.
+type fileChangedMsg struct{ modTime time.Time }
+
+// watchTickMsg is a heartbeat sent every 500ms to drive file polling.
+type watchTickMsg struct{}
+
+// watchFileTick returns a command that polls the source file for changes.
+func (m *model) watchFileTick() tea.Cmd {
+	return tea.Every(500*time.Millisecond, func(t time.Time) tea.Msg {
+		if m.sourceFile == "" {
+			return watchTickMsg{}
+		}
+		info, err := os.Stat(m.sourceFile)
+		if err != nil {
+			return watchTickMsg{}
+		}
+		if info.ModTime().After(m.sourceFileMod) {
+			return fileChangedMsg{info.ModTime()}
+		}
+		return watchTickMsg{}
+	})
+}
+
+// reloadMeasures re-parses the current DSL text and rebuilds the score.
+// If sourceFile is set, reads from disk first. Returns error string or empty.
+func (m *model) reloadMeasures() string {
+	dsl := m.dslText
+	if m.sourceFile != "" {
+		data, err := os.ReadFile(m.sourceFile)
+		if err != nil {
+			return fmt.Sprintf("read error: %v", err)
+		}
+		dsl = string(data)
+	}
+
+	sanitized := parser.SanitizeDSL(dsl)
+	if sanitized == "" {
+		return "empty DSL after sanitization"
+	}
+
+	result := parser.ParseDSL(sanitized)
+	if result.Err != nil {
+		return fmt.Sprintf("parse error: %v", result.Err)
+	}
+	if len(result.Measures) == 0 {
+		return "no measures produced"
+	}
+
+	smfBytes, tl, err := midi.GenerateSMF(result.Measures, m.bpm)
+	if err != nil {
+		return fmt.Sprintf("generate SMF: %v", err)
+	}
+
+	m.dslText = sanitized
+	m.measures = result.Measures
+	m.smfBytes = smfBytes
+	m.timeline = tl
+
+	ansiOutput := render.Render(result.Measures, m.asciiLeaps, m.showSubscripts)
+	renderLines := strings.Split(ansiOutput, "\n")
+	if len(renderLines) > 0 && renderLines[len(renderLines)-1] == "" {
+		renderLines = renderLines[:len(renderLines)-1]
+	}
+	m.renderLines = renderLines
+
+	// Update end measure to match the new score
+	if len(result.Measures) > 0 {
+		m.endMeasure = len(result.Measures) - 1
+	}
+	if m.startMeasure >= len(result.Measures) {
+		m.startMeasure = 0
+	}
+	m.currentMeasure = m.startMeasure
+
+	// Reload MIDI player
+	if err := m.loadMIDIPlayer(); err != nil {
+		return fmt.Sprintf("load MIDI: %v", err)
+	}
+
+	return ""
 }

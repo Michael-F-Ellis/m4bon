@@ -2,7 +2,6 @@ package parser
 
 import (
 	"fmt"
-	"math"
 	"regexp"
 	"strings"
 
@@ -570,46 +569,44 @@ func canonicalKey(body string) string {
 
 // --- Octave resolution ---
 
-// nextHigherPitch finds the smallest MIDI note with the given letter and accidental
-// that is strictly higher than the reference pitch. Used for chord voicing where
-// each subsequent chord tone must be the next octave higher.
-func nextHigherPitch(letter string, accidental, octaveShift int, reference int) int {
-	base := theory.NoteOffsets[letter]
-	raw := base + accidental
-	refOctave := reference / 12
-	for oct := refOctave; oct <= refOctave+4; oct++ {
-		candidate := oct*12 + raw
-		if candidate > reference {
-			candidate += octaveShift * 12
-			if candidate < 0 {
-				candidate = 0
-			}
-			if candidate > 127 {
-				candidate = 127
-			}
-			return candidate
-		}
-	}
-	return reference + 12
-}
+// letterIndex maps pitch letters a-g to consecutive diatonic indices 0-6.
+var letterIndex = map[string]int{"c": 0, "d": 1, "e": 2, "f": 3, "g": 4, "a": 5, "b": 6}
 
-func resolvePitch(letter string, accidental, octaveShift int, reference int) int {
-	base := theory.NoteOffsets[letter]
-	refOctave := reference / 12
-	raw := base + accidental
+// resolveOctave picks the closest octave for targetLetter relative to a
+// reference letter+octave, using diatonic step distance. octaveShift is
+// applied after the closest octave is found.
+func resolveOctave(targetLetter, refLetter string, refOctave, octaveShift int) int {
+	targetIdx := letterIndex[targetLetter]
+	refIdx := letterIndex[refLetter]
 
 	bestOctave := refOctave
-	bestDiff := 999
-	for oct := refOctave - 2; oct <= refOctave+2; oct++ {
-		candidate := oct*12 + raw
-		diff := int(math.Abs(float64(candidate - reference)))
-		if diff < bestDiff {
-			bestDiff = diff
-			bestOctave = oct
+	bestDist := 999
+	for o := refOctave - 2; o <= refOctave+2; o++ {
+		dist := abs((o*7 + targetIdx) - (refOctave*7 + refIdx))
+		if dist < bestDist {
+			bestDist = dist
+			bestOctave = o
 		}
 	}
-	bestOctave += octaveShift
-	midi := bestOctave*12 + raw
+	return bestOctave + octaveShift
+}
+
+// nextHigherOctave returns the octave for targetLetter such that it sits
+// above refLetter+refOctave. Chords are always ascending in pitch letter;
+// wraps octave when targetIdx <= refIdx. octaveShift is applied afterward.
+func nextHigherOctave(refLetter, targetLetter string, refOctave, octaveShift int) int {
+	targetIdx := letterIndex[targetLetter]
+	refIdx := letterIndex[refLetter]
+	oct := refOctave
+	if targetIdx <= refIdx {
+		oct++
+	}
+	return oct + octaveShift
+}
+
+// midiFromPitch computes a MIDI note number from letter, accidental, and octave.
+func midiFromPitch(letter string, accidental, octave int) int {
+	midi := octave*12 + theory.NoteOffsets[letter] + accidental
 	if midi < 0 {
 		midi = 0
 	}
@@ -617,6 +614,13 @@ func resolvePitch(letter string, accidental, octaveShift int, reference int) int
 		midi = 127
 	}
 	return midi
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // timeSigTicks returns the total ticks for a measure of the given time signature.
@@ -903,18 +907,18 @@ func detectPickup(events []Event, timeNum, timeDen int, measureIdx int, hasSecon
 	return totalTicks(events) < capacity
 }
 
-// resolveOctavesMeasures resolves MIDI pitch numbers for all events across all measures,
-// using per-voice reference tracking (Lilypond "closest interval" rule).
+// resolveOctavesMeasures resolves octaves and MIDI pitch numbers for all events
+// across all measures, using per-voice reference tracking (Lilypond "closest interval" rule).
+// Octave resolution is purely diatonic (letter+octave); MIDI is derived via lookup after.
 func resolveOctavesMeasures(measures []MeasureResult) {
-	lastPitch := make(map[int]int)
-	lastPitch[1] = 60 // default: voice 1 starts at C4
+	lastOctave := make(map[int]int)
+	lastLetter := make(map[int]string)
+	lastOctave[1] = 5 // default: voice 1 starts at C4 (MIDI 60/12)
+	lastLetter[1] = "c"
 	for mi := range measures {
 		keyAcc := fifthsToAccidentalMap(measures[mi].Fifths)
 
 		// Per-measure accidental tracking: letter → effective accidental.
-		// An accidental on a letter persists for all subsequent notes of the
-		// same letter in the measure (unless canceled by a different accidental
-		// or a natural sign).
 		measureAcc := make(map[string]int)
 
 		for i := range measures[mi].Events {
@@ -924,17 +928,22 @@ func resolveOctavesMeasures(measures []MeasureResult) {
 			}
 
 			v := ev.Voice
-			ref, ok := lastPitch[v]
+			refOct, ok := lastOctave[v]
 			if !ok {
-				ref = 60
-				lastPitch[v] = ref
+				refOct = 5
+				lastOctave[v] = refOct
+				lastLetter[v] = "c"
 			}
+			refLet := lastLetter[v]
 
 			if ev.Type == EventNote {
 				acc := measureLevelAccidental(ev.Letter, ev.Accidental, ev.ExplicitNatural, keyAcc, measureAcc)
 				ev.EffAccidental = acc
-				ev.Midi = resolvePitch(ev.Letter, acc, ev.OctaveShift, ref)
-				lastPitch[v] = ev.Midi
+				oct := resolveOctave(ev.Letter, refLet, refOct, ev.OctaveShift)
+				ev.ResolvedOctave = oct
+				ev.Midi = midiFromPitch(ev.Letter, acc, oct)
+				lastOctave[v] = oct
+				lastLetter[v] = ev.Letter
 			} else if ev.Type == EventChord {
 				if ev.Split {
 					var prev Event
@@ -951,24 +960,31 @@ func resolveOctavesMeasures(measures []MeasureResult) {
 					if len(prev.Midis) == len(ev.Pitches) {
 						ev.Midis = make([]int, len(prev.Midis))
 						copy(ev.Midis, prev.Midis)
+						ev.ResolvedOctaves = make([]int, len(prev.ResolvedOctaves))
+						copy(ev.ResolvedOctaves, prev.ResolvedOctaves)
 						continue
 					}
 				}
-				chordRef := ref
+				chordOct := refOct
+				chordLet := refLet
 				for p := range ev.Pitches {
 					pi := ev.Pitches[p]
-					var m int
+					var oct int
 					acc := measureLevelAccidental(pi.Letter, pi.Accidental, pi.ExplicitNatural, keyAcc, measureAcc)
-					ev.Pitches[p].Accidental = acc // update for EffAccidental use downstream
+					ev.Pitches[p].Accidental = acc
 					if p == 0 {
-						m = resolvePitch(pi.Letter, acc, pi.OctaveShift, chordRef)
+						oct = resolveOctave(pi.Letter, chordLet, chordOct, pi.OctaveShift)
 					} else {
-						m = nextHigherPitch(pi.Letter, acc, pi.OctaveShift, chordRef)
+						oct = nextHigherOctave(chordLet, pi.Letter, chordOct, pi.OctaveShift)
 					}
+					m := midiFromPitch(pi.Letter, acc, oct)
 					ev.Midis = append(ev.Midis, m)
-					chordRef = m
+					ev.ResolvedOctaves = append(ev.ResolvedOctaves, oct)
+					chordOct = oct
+					chordLet = pi.Letter
 				}
-				lastPitch[v] = ev.Midis[len(ev.Midis)-1]
+				lastOctave[v] = ev.ResolvedOctaves[len(ev.ResolvedOctaves)-1]
+				lastLetter[v] = ev.Pitches[len(ev.Pitches)-1].Letter
 			}
 		}
 	}
