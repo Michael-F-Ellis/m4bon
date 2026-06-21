@@ -9,9 +9,9 @@ import (
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mellis/m4bon"
 )
 
-var ansiPattern = []byte{0x1b, '['}
 
 // visibleLen returns the length of a string with ANSI escape codes removed
 // and all Unicode combining characters (like subscripts) counted as zero-width.
@@ -164,7 +164,7 @@ func (m *model) topBar() string {
 		bar = bar[:m.width-7] + "..."
 	}
 
-	return styleTopBar.Render(" m4bon  │  " + bar)
+	return styleTopBar.Render(" m4bon v" + m4bon.Version + "  │  " + bar)
 }
 
 // measureView renders the measure lines with indicator and scroll.

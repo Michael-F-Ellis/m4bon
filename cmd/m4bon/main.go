@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mellis/m4bon"
 	"github.com/mellis/m4bon/cmd/m4bon/tui"
 	"github.com/mellis/m4bon/musicxml"
 	"github.com/mellis/m4bon/parser"
@@ -28,9 +29,10 @@ func main() {
 	renderFlag := flag.Bool("render", false, "Output colorized text format instead of MusicXML")
 	tuiFlag := flag.Bool("tui", false, "Launch the interactive TUI performance/learning tool")
 	bpmFlag := flag.Float64("bpm", 120, "Tempo in beats per minute (for TUI mode)")
+	versionFlag := flag.Bool("version", false, "Print version and exit")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: m4bon [options] [dsl]\n\n")
-		fmt.Fprintf(os.Stderr, "Convert m4bon beat-oriented DSL to MusicXML.\n\n")
+		fmt.Fprintf(os.Stderr, "m4bon v%s — beat-oriented note entry to MusicXML.\n\n", m4bon.Version)
 		fmt.Fprintf(os.Stderr, "Time and key signatures are specified in the DSL:\n")
 		fmt.Fprintf(os.Stderr, "  M4/4 c d e f     (meter, default 4/4)\n")
 		fmt.Fprintf(os.Stderr, "  KE& M6/8 abc def (key sig + meter)\n\n")
@@ -45,6 +47,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  m4bon -tui -f score.dsl -bpm 96\n")
 	}
 	flag.Parse()
+
+	// Version flag
+	if *versionFlag {
+		fmt.Printf("m4bon v%s\n", m4bon.Version)
+		return
+	}
 
 	// Read DSL
 	var dsl string
