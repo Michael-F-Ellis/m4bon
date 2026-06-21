@@ -247,6 +247,9 @@ smfBytes, timeline, err := midi.GenerateSMF(measures.Measures, 120)
 | `go vet` with `make check` | `go vet` catches unkeyed struct fields; run `make check` before committing to catch issues early |
 | Makefile with `make build` | `go test ./...` skips `darwin && cgo` TUI code — binary is NOT rebuilt by tests. `make` ensures binary is fresh |
 | Scheduler-less TUI cursor | The `macaudio.Scheduler` approach had subtle timing issues because `Position()` returns `playStartUs` when stopped. Elapsed-time polling via `positionMsg` + `measureAtTime()` is more robust |
+| `GroupSlots` for cross-group sustain render | `GroupSlots []int` on `MeasureResult` tracks per-group slot count. Render computes `startSustains = slotCount - nonSplitCount - intraGroupSustains` — cross-group sustains that leave no Event are still visible as dashes |
+| `EffAccidental` separate from `Accidental` | `EffAccidental` stores the effective accidental (including measure-level persistence). `Accidental` stores the raw DSL value. MusicXML uses `Accidental` for printed accidental symbols and `EffAccidental` for `<alter>`. Render uses `EffAccidental` for note style color |
+| Sustain events must not carry `OctaveShift` | Three sustain-creation paths (pure-group, mixed-group, voice-poly) all set `OctaveShift: 0` — a sustain continues the same pitch, not a shifted one |
 
 ---
 
@@ -277,3 +280,6 @@ When `-render` is set, each measure is output as one line:
 - Render uses beat-group index grouping (GroupIdx on Event), not tick positions
 - Cross-measure sustain for voice-poly is fragile: `priorEvents[1]` hard-coded in legacy sustain path (pipeline.go lines 68, 152). When a voice-poly chord follows a traditional chord (e.g. `(c d e) | (- - g)`), the individual pitches of the traditional chord must be findable through the voice 1 prior event. Sustain-after-rest semantics (e.g. `(c ; e) | (- ; g)`) require nil-sentinel handling — a rest establishes the voice but doesn't provide a pitch to extend.
 - `encoding/xml` produces `<chord>true</chord>` instead of spec-conformant `<chord/>`. Most renderers accept this.
+- Render accidentals follow measure-level persistence (an accidental on a letter affects subsequent same-letter notes), which matches Engraving Rules but differs from some DAW conventions that reset per beat.
+- Sustains across barlines use the relative-octave pitch of the source note, not the absolute octave from `^`/`/`. `OctaveShift` is intentionally zeroed on sustain events.
+- TUI line truncation (`view.go`) is ANSI-aware and rune-safe; the old byte-based slicing could bisect ANSI sequences and garble the display.

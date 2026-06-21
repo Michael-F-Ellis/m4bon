@@ -263,7 +263,7 @@ func TestGenerateSMF_Tuplets(t *testing.T) {
 func TestGenerateSMF_EmptyMeasures(t *testing.T) {
 	// Empty measure with no events — manually construct MeasureResult.
 	measures := []parser.MeasureResult{
-		{TimeNum: 4, TimeDen: 4, Events: nil, NumGroups: 0, Fifths: 0},
+		{TimeNum: 4, TimeDen: 4, Events: nil, NumGroups: 0, Fifths: 0, GroupSlots: nil},
 	}
 	data, _, err := GenerateSMF(measures, 120)
 	if err != nil {
@@ -364,8 +364,8 @@ func TestGenerateSMF_RoundTrip(t *testing.T) {
 func TestGenerateSMF_EmptyMeasuresNoNotes(t *testing.T) {
 	// Two empty measures — manually construct MeasureResults.
 	measures := []parser.MeasureResult{
-		{TimeNum: 4, TimeDen: 4, Events: nil, NumGroups: 0, Fifths: 0},
-		{TimeNum: 4, TimeDen: 4, Events: nil, NumGroups: 0, Fifths: 0},
+		{TimeNum: 4, TimeDen: 4, Events: nil, NumGroups: 0, Fifths: 0, GroupSlots: nil},
+		{TimeNum: 4, TimeDen: 4, Events: nil, NumGroups: 0, Fifths: 0, GroupSlots: nil},
 	}
 	data, _, err := GenerateSMF(measures, 120)
 	if err != nil {

@@ -413,7 +413,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 				midiOct := ev.Midi / 12
 
 				accidentalDisplay := accidentalString(ev.Accidental)
-				if accidentalDisplay == "" && ev.Accidental == 0 {
+				if accidentalDisplay == "" && ev.EffAccidental == 0 {
 					if ps, ok := pitchStates[letter]; ok && ps.hasAccidental {
 						accidentalDisplay = "natural"
 					}
@@ -426,7 +426,7 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 				}
 
 				ne := NoteEl{
-					Pitch:      &PitchEl{Step: letter, Octave: midiOct - 1, Alter: ev.Accidental},
+					Pitch:      &PitchEl{Step: letter, Octave: midiOct - 1, Alter: ev.EffAccidental},
 					Duration:   durTicks,
 					Type:       noteType,
 					Dots:       makeDots(dotCount_),

@@ -23,8 +23,12 @@ func Render(measures []parser.MeasureResult) string {
 // independent of any output format (terminal, HTML, etc.).
 func BuildCells(measures []parser.MeasureResult) []CellSeq {
 	result := make([]CellSeq, 0, len(measures))
+	offset := 1
+	if len(measures) > 0 && measures[0].IsPickup {
+		offset = 0
+	}
 	for mi, m := range measures {
-		cells := buildMeasureCells(m, mi+1)
+		cells := buildMeasureCells(m, mi+offset)
 		result = append(result, cells)
 	}
 	return result
@@ -59,7 +63,32 @@ func buildMeasureCells(m parser.MeasureResult, measureNum int) CellSeq {
 			cells = append(cells, Cell{Content: " ", Style: StyleDefault})
 		}
 
+		// Determine slot count for this group (default 1 for safety)
+		slotCount := 1
+		if expectedIdx < len(m.GroupSlots) {
+			slotCount = m.GroupSlots[expectedIdx]
+		}
+
 		if gi < len(groups) && groups[gi].idx == expectedIdx {
+			// Count non-Split events to compute start-of-group sustains
+			nonSplitCount := 0
+			for _, ev := range groups[gi].events {
+				if !ev.Split {
+					nonSplitCount++
+				}
+			}
+			totalSustains := slotCount - nonSplitCount
+			intraGroupSustains := 0
+			for _, ev := range groups[gi].events {
+				if !ev.Split {
+					intraGroupSustains += ev.NumSlots - 1
+				}
+			}
+			startSustains := totalSustains - intraGroupSustains
+			for s := 0; s < startSustains; s++ {
+				cells = append(cells, Cell{Content: "-", Style: StyleSustainRest})
+			}
+
 			// Render events for this beat group, skipping notational ties
 			for _, ev := range groups[gi].events {
 				if ev.Split {
@@ -120,7 +149,7 @@ func eventToCells(ev parser.Event, keyAcc map[string]int, firstInMeasure bool) [
 		if ev.Split {
 			return []Cell{{Content: "-", Style: StyleSustainRest}}
 		}
-		style := noteStyle(ev.Letter, ev.Accidental, ev.ExplicitNatural, keyAcc)
+		style := noteStyle(ev.Letter, ev.EffAccidental, false, keyAcc)
 		sub := octaveSubscript(ev.Midi, firstInMeasure || ev.OctaveShift != 0)
 		return []Cell{{Content: ev.Letter, Style: style, Subscript: sub}}
 

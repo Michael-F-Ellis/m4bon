@@ -66,12 +66,13 @@ type Event struct {
 	Duration          Fraction
 	Nominal           *Fraction // for tuplet notes: the nominal (display) duration
 	Letter            string    // EventNote only
-	Accidental        int       // EventNote only
+	Accidental        int       // EventNote only; raw accidental from DSL (0 if none)
 	OctaveShift       int       // EventNote only
 	ExplicitNatural   bool      // EventNote only; % was used; overrides key signature
 	Pitches           []Pitch   // EventChord only
 	Midi              int       // EventNote only; resolved MIDI pitch
 	Midis             []int     // EventChord only; resolved MIDI pitches
+	EffAccidental     int       // effective accidental including measure-level persistence (for alter/render)
 	Split             bool      // continuation from splitNonStandardDurations or barline split
 	TieNext           bool      // cross-measure tie to next measure's first note
 	Voice             int       // 1-based voice number (1,2,3 for voice-poly)
@@ -89,6 +90,7 @@ func NewNoteEvent(letter string, accidental, octaveShift int, explicitNatural bo
 		Nominal:         nominal,
 		Letter:          letter,
 		Accidental:      accidental,
+		EffAccidental:   accidental,
 		OctaveShift:     octaveShift,
 		ExplicitNatural: explicitNatural,
 		Voice:           voice,
@@ -193,12 +195,13 @@ type DSLResult struct {
 
 // MeasureResult holds the parsed events and metadata for a single measure.
 type MeasureResult struct {
-	Events    []Event
-	TimeNum   int
-	TimeDen   int
-	Fifths    int
-	IsPickup  bool
-	NumGroups int // number of beat groups in the DSL input for this measure
+	Events     []Event
+	TimeNum    int
+	TimeDen    int
+	Fifths     int
+	IsPickup   bool
+	NumGroups  int  // number of beat groups in the DSL input for this measure
+	GroupSlots []int // number of slots per beat group (indexed by GroupIdx), for render
 }
 
 // BeatDuration codes for B directive.

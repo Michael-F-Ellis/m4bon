@@ -202,6 +202,7 @@ func TestGenerateSingleMeasureNotes(t *testing.T) {
 		TimeDen:   4,
 		Fifths:    0,
 		NumGroups: 4,
+		GroupSlots: nil,
 	}}
 
 	// Resolve octaves manually
@@ -253,6 +254,7 @@ func TestGenerateWithRest(t *testing.T) {
 		TimeDen:   4,
 		Fifths:    0,
 		NumGroups: 2,
+		GroupSlots: nil,
 	}}
 	xml, err := Generate(measures, 0)
 	if err != nil {
@@ -301,6 +303,7 @@ func TestGenerateKeySignature(t *testing.T) {
 		TimeDen:   4,
 		Fifths:    3, // A major (3 sharps)
 		NumGroups: 1,
+		GroupSlots: nil,
 	}}
 	xml, err := Generate(measures, 0)
 	if err != nil {
@@ -425,6 +428,7 @@ func TestGenerateTuplet(t *testing.T) {
 		TimeDen:   4,
 		Fifths:    0,
 		NumGroups: 1,
+		GroupSlots: nil,
 	}}
 	xml, err := Generate(measures, 0)
 	if err != nil {

@@ -6,9 +6,110 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 )
+
+var ansiPattern = []byte{0x1b, '['}
+
+// visibleLen returns the length of a string with ANSI escape codes removed
+// and all Unicode combining characters (like subscripts) counted as zero-width.
+func visibleLen(s string) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			// Skip ANSI sequence: ESC[...m
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			continue
+		}
+		r, _ := runeAt(s, i)
+		if r != -1 {
+			// Subscripts and combining marks are zero-width
+			if !unicode.Is(unicode.Mn, r) && !unicode.Is(unicode.Me, r) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// runeAt returns the rune at byte index i in s, or -1 if invalid.
+func runeAt(s string, i int) (rune, int) {
+	if i >= len(s) {
+		return -1, 0
+	}
+	r, size := rune(s[i]), 1
+	if r > 0x7f {
+		r, size = decodeRune(s[i:])
+	}
+	return r, size
+}
+func decodeRune(s string) (rune, int) {
+	if len(s) == 0 {
+		return -1, 0
+	}
+	b := s[0]
+	switch {
+	case b < 0x80:
+		return rune(b), 1
+	case b < 0xC0:
+		return rune(b), 1 // continuation byte, treat as latin1
+	case b < 0xE0:
+		if len(s) < 2 {
+			return rune(b), 1
+		}
+		return rune(b&0x1F)<<6 | rune(s[1]&0x3F), 2
+	case b < 0xF0:
+		if len(s) < 3 {
+			return rune(b), 1
+		}
+		return rune(b&0x0F)<<12 | rune(s[1]&0x3F)<<6 | rune(s[2]&0x3F), 3
+	default:
+		if len(s) < 4 {
+			return rune(b), 1
+		}
+		return rune(b&0x07)<<18 | rune(s[1]&0x3F)<<12 | rune(s[2]&0x3F)<<6 | rune(s[3]&0x3F), 4
+	}
+}
+
+// truncateVisible truncates s to at most maxVis visible characters,
+// preserving ANSI codes and avoiding mid-rune splits.
+func truncateVisible(s string, maxVis int) string {
+	visCount := 0
+	end := len(s)
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			// Skip ANSI sequence
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			if i < len(s) {
+				i++ // skip 'm'
+			}
+			continue
+		}
+		if visCount >= maxVis {
+			end = i
+			break
+		}
+		r, size := runeAt(s, i)
+		if r == -1 {
+			i++
+			continue
+		}
+		if !unicode.Is(unicode.Mn, r) && !unicode.Is(unicode.Me, r) {
+			visCount++
+		}
+		i += size
+	}
+	if end >= len(s) {
+		return s
+	}
+	return s[:end] + "..."
+}
 
 var (
 	styleTopBar = lipgloss.NewStyle().
@@ -95,9 +196,9 @@ func (m *model) measureView() string {
 	var b strings.Builder
 	for i := m.viewportStart; i < end; i++ {
 		line := m.renderLines[i]
-		// Truncate to fit width
-		if m.width > 10 && len(line) > m.width-6 {
-			line = line[:m.width-9] + "..."
+		// Truncate to fit width (measured by visible characters, not bytes)
+		if m.width > 10 && visibleLen(line) > m.width-6 {
+			line = truncateVisible(line, m.width-9)
 		}
 
 		if i == m.currentMeasure && m.isPlaying {

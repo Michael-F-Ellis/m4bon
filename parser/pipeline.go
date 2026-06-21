@@ -93,7 +93,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 					Duration:        Fraction{Num: sdNum, Den: sdDen},
 					Letter:          pe.Letter,
 					Accidental:      pe.Accidental,
-					OctaveShift:     pe.OctaveShift,
+					OctaveShift:     0, // sustain continues same pitch, no shift
 					ExplicitNatural: pe.ExplicitNatural,
 					Split:           true,
 					Voice:           1,
@@ -188,7 +188,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 						Duration:        Fraction{Num: posNum, Den: posDen},
 						Letter:          pe.Letter,
 						Accidental:      pe.Accidental,
-						OctaveShift:     pe.OctaveShift,
+						OctaveShift:     0, // sustain continues same pitch, no shift
 						ExplicitNatural: pe.ExplicitNatural,
 						Split:           true,
 						Voice:           1,
@@ -246,7 +246,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 									Duration:        Fraction{Num: posNum, Den: posDen},
 									Letter:          pe.Letter,
 									Accidental:      pe.Accidental,
-									OctaveShift:     pe.OctaveShift,
+									OctaveShift:     0, // sustain continues same pitch, no shift
 									ExplicitNatural: pe.ExplicitNatural,
 									Split:           true,
 									Voice:           voice,
@@ -910,6 +910,13 @@ func resolveOctavesMeasures(measures []MeasureResult) {
 	lastPitch[1] = 60 // default: voice 1 starts at C4
 	for mi := range measures {
 		keyAcc := fifthsToAccidentalMap(measures[mi].Fifths)
+
+		// Per-measure accidental tracking: letter → effective accidental.
+		// An accidental on a letter persists for all subsequent notes of the
+		// same letter in the measure (unless canceled by a different accidental
+		// or a natural sign).
+		measureAcc := make(map[string]int)
+
 		for i := range measures[mi].Events {
 			ev := &measures[mi].Events[i]
 			if ev.Type == EventTupletStart || ev.Type == EventRest {
@@ -924,7 +931,8 @@ func resolveOctavesMeasures(measures []MeasureResult) {
 			}
 
 			if ev.Type == EventNote {
-				acc := effectiveAccidental(ev.Letter, ev.Accidental, ev.ExplicitNatural, keyAcc)
+				acc := measureLevelAccidental(ev.Letter, ev.Accidental, ev.ExplicitNatural, keyAcc, measureAcc)
+				ev.EffAccidental = acc
 				ev.Midi = resolvePitch(ev.Letter, acc, ev.OctaveShift, ref)
 				lastPitch[v] = ev.Midi
 			} else if ev.Type == EventChord {
@@ -950,7 +958,8 @@ func resolveOctavesMeasures(measures []MeasureResult) {
 				for p := range ev.Pitches {
 					pi := ev.Pitches[p]
 					var m int
-					acc := effectiveAccidental(pi.Letter, pi.Accidental, pi.ExplicitNatural, keyAcc)
+					acc := measureLevelAccidental(pi.Letter, pi.Accidental, pi.ExplicitNatural, keyAcc, measureAcc)
+					ev.Pitches[p].Accidental = acc // update for EffAccidental use downstream
 					if p == 0 {
 						m = resolvePitch(pi.Letter, acc, pi.OctaveShift, chordRef)
 					} else {
@@ -963,6 +972,26 @@ func resolveOctavesMeasures(measures []MeasureResult) {
 			}
 		}
 	}
+}
+
+// measureLevelAccidental returns the effective accidental for a note, taking into
+// account any prior accidental on the same letter within the current measure.
+// If the note has an explicit accidental or natural sign, it updates the
+// measureAcc map. Otherwise, it falls through to the measure's prior accidental
+// (if any) and then to the key signature.
+func measureLevelAccidental(letter string, explicitAcc int, explicitNatural bool, keyAcc map[string]int, measureAcc map[string]int) int {
+	if explicitAcc != 0 || explicitNatural {
+		// User explicitly specified an accidental or natural — this sets the
+		// measure-level accidental for this letter.
+		acc := effectiveAccidental(letter, explicitAcc, explicitNatural, keyAcc)
+		measureAcc[letter] = acc
+		return acc
+	}
+	// No explicit accidental — check measure-level tracking first, then key sig.
+	if acc, ok := measureAcc[letter]; ok {
+		return acc
+	}
+	return effectiveAccidental(letter, 0, false, keyAcc)
 }
 
 // ParseDSL parses m4bon DSL text into a sequence of measures.
@@ -1052,13 +1081,22 @@ func ParseDSL(text string) DSLResult {
 		// Pickup detection
 		isPickup := detectPickup(events, effectiveTimeNum, effectiveTimeDen, mi, hasSecondMeasure)
 
+		// Build GroupSlots from parsed groups
+		groupSlots := make([]int, numGroups)
+		for gIdx, grp := range groups {
+			if gIdx < len(groupSlots) {
+				groupSlots[gIdx] = len(grp.Slots)
+			}
+		}
+
 		measures = append(measures, MeasureResult{
-			Events:    events,
-			TimeNum:   effectiveTimeNum,
-			TimeDen:   effectiveTimeDen,
-			Fifths:    md.fifths,
-			IsPickup:  isPickup,
-			NumGroups: numGroups,
+			Events:     events,
+			TimeNum:    effectiveTimeNum,
+			TimeDen:    effectiveTimeDen,
+			Fifths:     md.fifths,
+			IsPickup:   isPickup,
+			NumGroups:  numGroups,
+			GroupSlots: groupSlots,
 		})
 
 		lastMeasureHadNote = measureHasNote(events)

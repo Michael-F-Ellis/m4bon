@@ -17,7 +17,7 @@ func Run(dslText, label string, bpm float64) error {
 	if dslText == "" {
 		// Empty state - just show the TUI with no music loaded
 		emptyMeasures := []parser.MeasureResult{
-			{TimeNum: 4, TimeDen: 4, Events: nil, NumGroups: 0},
+			{TimeNum: 4, TimeDen: 4, Events: nil, NumGroups: 0, GroupSlots: nil},
 		}
 		smfBytes, tl, err := midi.GenerateSMF(emptyMeasures, bpm)
 		if err != nil {
