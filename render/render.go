@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/mellis/m4bon/frac"
 	"github.com/mellis/m4bon/parser"
@@ -12,12 +13,12 @@ import (
 const TicksPerWholeNote = frac.TicksPerWholeNote
 
 // Render produces the colorized text output for a sequence of measures.
-// Returns one line per measure with ANSI escape codes for colors.
-// asciiLeaps uses ANSI overline/underline instead of Unicode combining diacritics.
-// showSubscripts controls whether octave subscripts are rendered.
+// Returns one line per measure with ANSI escape codes for colors, in a
+// three-column layout (CHORDS : NOTES : LYRICS) when chord or lyric
+// directives are present.
 func Render(measures []parser.MeasureResult, asciiLeaps bool, showSubscripts bool) string {
-	cellMeasures := BuildCells(measures, showSubscripts)
-	return FormatANSI(cellMeasures, asciiLeaps)
+	rows, maxCW, maxNW, maxLW := BuildRows(measures, showSubscripts)
+	return FormatANSIRows(rows, maxCW, maxNW, maxLW, asciiLeaps)
 }
 
 // BuildCells converts measures into the intermediate Cell representation,
@@ -72,6 +73,11 @@ func buildMeasureCells(m parser.MeasureResult, measureNum int, showSubscripts bo
 		}
 
 		if gi < len(groups) && groups[gi].idx == expectedIdx {
+			// Prepend beat multiplier if > 1
+			if expectedIdx < len(m.GroupMults) && m.GroupMults[expectedIdx] > 1 {
+				cells = append(cells, Cell{Content: fmt.Sprintf("%d", m.GroupMults[expectedIdx]), Style: StyleSustainRest})
+			}
+
 			// Count non-Split events to compute start-of-group sustains
 			nonSplitCount := 0
 			for _, ev := range groups[gi].events {
@@ -249,4 +255,164 @@ func subscriptDigit(d int) string {
 		return ""
 	}
 	return subscriptDigits[d]
+}
+
+// --- Three-Column Layout ---
+
+// BuildRows converts measures into a three-column MeasureRow representation
+// and computes the maximum visible widths for each column.
+func BuildRows(measures []parser.MeasureResult, showSubscripts bool) (rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int) {
+	offset := 1
+	if len(measures) > 0 && measures[0].IsPickup {
+		offset = 0
+	}
+
+	anyChords := false
+	anyLyrics := false
+	for _, m := range measures {
+		if m.HasChords {
+			anyChords = true
+		}
+		if m.HasLyrics {
+			anyLyrics = true
+		}
+	}
+
+	for mi, m := range measures {
+		var row MeasureRow
+
+		if anyChords {
+			row.ChordCells = buildChordCells(m)
+		}
+		row.NoteCells = buildMeasureCells(m, mi+offset, showSubscripts)
+		// Strip trailing newline cell for column width computation
+		row.NoteCells = stripTrailingNewline(row.NoteCells)
+		if anyLyrics {
+			row.LyricCells = buildLyricCells(m)
+		}
+
+		rows = append(rows, row)
+
+		cw := visibleLen(row.ChordCells)
+		if cw > maxChordW {
+			maxChordW = cw
+		}
+		nw := visibleLen(row.NoteCells)
+		if nw > maxNoteW {
+			maxNoteW = nw
+		}
+		lw := visibleLen(row.LyricCells)
+		if lw > maxLyricW {
+			maxLyricW = lw
+		}
+	}
+	return rows, maxChordW, maxNoteW, maxLyricW
+}
+
+// buildChordCells produces cells for the chord symbols of a measure.
+func buildChordCells(m parser.MeasureResult) CellSeq {
+	if !m.HasChords || len(m.Chords) == 0 {
+		return nil
+	}
+	var cells CellSeq
+	for i, raw := range m.Chords {
+		if i > 0 {
+			cells = append(cells, Cell{Content: " ", Style: StyleDefault})
+		}
+		if raw == "-" {
+			cells = append(cells, Cell{Content: "-", Style: StyleSustainRest})
+		} else if raw == ";" {
+			cells = append(cells, Cell{Content: ";", Style: StyleSustainRest})
+		} else {
+			display, rootAcc, bassAcc := theory.NormalizeChordSymbol(raw)
+			if bassAcc != 0 && strings.Contains(display, "/") {
+				// Slash chord: style root and bass parts independently
+				parts := strings.SplitN(display, "/", 2)
+				// Root part
+				rootStyle := chordStyleForAccidental(rootAcc)
+				cells = append(cells, Cell{Content: parts[0], Style: rootStyle})
+				cells = append(cells, Cell{Content: "/", Style: StyleDefault})
+				bassStyle := chordStyleForAccidental(bassAcc)
+				cells = append(cells, Cell{Content: parts[1], Style: bassStyle})
+			} else {
+				style := chordStyleForAccidental(rootAcc)
+				cells = append(cells, Cell{Content: display, Style: style})
+			}
+		}
+	}
+	return cells
+}
+
+// chordStyleForAccidental returns a StyleClass for a chord's root accidental.
+func chordStyleForAccidental(acc int) StyleClass {
+	switch {
+	case acc > 0:
+		return StyleSharp
+	case acc < 0:
+		return StyleFlat
+	default:
+		return StyleDefault
+	}
+}
+
+// buildLyricCells produces cells for the lyric syllables of a measure.
+// Lyrics map 1:1 to active note attacks in the measure's events (skipping
+// Split/tuplet/rest events).
+func buildLyricCells(m parser.MeasureResult) CellSeq {
+	if !m.HasLyrics || len(m.Lyrics) == 0 {
+		return nil
+	}
+	if len(m.Events) == 0 {
+		return nil
+	}
+
+	var cells CellSeq
+	li := 0 // index into m.Lyrics
+	first := true
+	for _, ev := range m.Events {
+		if ev.Type == parser.EventTupletStart || ev.Split {
+			continue
+		}
+		if ev.Type == parser.EventRest {
+			continue
+		}
+		if li >= len(m.Lyrics) {
+			break
+		}
+		if !first {
+			cells = append(cells, Cell{Content: " ", Style: StyleDefault})
+		}
+		token := m.Lyrics[li]
+		if token == "-" {
+			cells = append(cells, Cell{Content: "-", Style: StyleSustainRest})
+		} else if token == "*" || strings.Trim(token, "*") == "" {
+			cells = append(cells, Cell{Content: "*", Style: StyleSustainRest})
+		} else if strings.Contains(token, "_") {
+			parts := strings.Split(token, "_")
+			for pi, p := range parts {
+				if pi > 0 {
+					cells = append(cells, Cell{Content: "_", Style: StyleDefault})
+				}
+				cells = append(cells, Cell{Content: p, Style: StyleDefault})
+			}
+		} else {
+			cells = append(cells, Cell{Content: token, Style: StyleDefault})
+		}
+		li++
+		first = false
+	}
+	return cells
+}
+
+// visibleLen returns the visible character length of a cell sequence,
+// counting display width (number of Unicode code points) rather than bytes.
+func visibleLen(cells CellSeq) int {
+	n := 0
+	for _, c := range cells {
+		n += len([]rune(c.Content))
+		if c.Subscript != "" {
+			n += len([]rune(c.Subscript))
+		}
+	}
+	return n
 }

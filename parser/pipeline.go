@@ -136,7 +136,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 		posDen := totalDen * posCount
 
 		perNoteNum := totalNum
-		perNoteDen := totalDen * activeCount
+		perNoteDen := totalDen * posCount
 		needsTuplet := !isStandardDuration(perNoteNum, perNoteDen)
 
 		var nomNum, nomDen int
@@ -487,6 +487,40 @@ func splitNonStandardDurations(events []Event) []Event {
 }
 
 // --- Directive parsing ---
+
+// extractDirectivesTail peels :H and :L tokens from the end of a measure's
+// token group. Returns the remaining tokens (notation + K/M/B directives),
+// and the extracted chord/lyric token slices.
+//
+// Algorithm: L→R state machine. Tokens before the first :H/:L are notation
+// tokens. After :H: payload tokens go to chordTokens. After :L: payload tokens
+// go to lyricTokens. Markers themselves are consumed. The last marker seen
+// determines where subsequent tokens go.
+func extractDirectivesTail(tokens []Token) (remaining []Token, chordTokens, lyricTokens []string) {
+	var notationTokens []Token
+	state := 0 // 0=notation, 1=chords, 2=lyrics
+
+	for _, tok := range tokens {
+		raw := tok.Raw
+		if raw == ":H" || raw == ":h" {
+			state = 1
+			continue
+		}
+		if raw == ":L" || raw == ":l" {
+			state = 2
+			continue
+		}
+		switch state {
+		case 1:
+			chordTokens = append(chordTokens, raw)
+		case 2:
+			lyricTokens = append(lyricTokens, raw)
+		default:
+			notationTokens = append(notationTokens, tok)
+		}
+	}
+	return notationTokens, chordTokens, lyricTokens
+}
 
 var keySigMap = map[string]int{
 	"c": 0, "g": 1, "d": 2, "a": 3, "e": 4, "b": 5,
@@ -1033,8 +1067,11 @@ func ParseDSL(text string) DSLResult {
 	for mi, group := range measureTokenGroups {
 		hasSecondMeasure := len(measureTokenGroups) > 1
 
-		// Scan directives from tokens
-		md := scanMeasureDirectives(group, currentFifths, currentTimeNum, currentTimeDen)
+		// Extract :H/:L directives from tail
+		notationTokens, chordRaw, lyricRaw := extractDirectivesTail(group)
+
+		// Scan directives from remaining tokens
+		md := scanMeasureDirectives(notationTokens, currentFifths, currentTimeNum, currentTimeDen)
 
 		// Override defaults if explicit M found
 		effectiveTimeNum := md.timeNum
@@ -1099,9 +1136,11 @@ func ParseDSL(text string) DSLResult {
 
 		// Build GroupSlots from parsed groups
 		groupSlots := make([]int, numGroups)
+		groupMults := make([]int, numGroups)
 		for gIdx, grp := range groups {
 			if gIdx < len(groupSlots) {
 				groupSlots[gIdx] = len(grp.Slots)
+				groupMults[gIdx] = grp.Multiplier
 			}
 		}
 
@@ -1113,6 +1152,11 @@ func ParseDSL(text string) DSLResult {
 			IsPickup:   isPickup,
 			NumGroups:  numGroups,
 			GroupSlots: groupSlots,
+			GroupMults: groupMults,
+			Chords:     chordRaw,
+			Lyrics:     lyricRaw,
+			HasChords:  len(chordRaw) > 0,
+			HasLyrics:  len(lyricRaw) > 0,
 		})
 
 		lastMeasureHadNote = measureHasNote(events)

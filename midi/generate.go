@@ -167,16 +167,22 @@ func GenerateSMF(measures []parser.MeasureResult, bpm float64) ([]byte, Timeline
 				atTick := voiceTick[voice]
 				pitches := extractPitches(ev)
 
-				// Emit pending NoteOffs for pitches whose time has come
+				// Emit pending NoteOffs for pitches whose time has come.
+				// When pt == atTick, emit 1 tick early to avoid same-tick
+				// collision with the incoming NoteOn (same pitch, same channel).
 				for _, p := range pitches {
 					key := voiceKey{ch, uint8(p)}
 					if pt, ok := pending[key]; ok && pt <= atTick {
-						scoreEvents = append(scoreEvents, timedEvent{pt, []byte{0x80 | ch, uint8(p), 0}})
+						offTick := pt
+						if offTick == atTick && offTick > 0 {
+							offTick--
+						}
+						scoreEvents = append(scoreEvents, timedEvent{offTick, []byte{0x80 | ch, uint8(p), 0}})
 						delete(pending, key)
 					}
 				}
 
-				// Emit NoteOn for pitches not still tied from previous measure
+				// Emit NoteOn for pitches not still pending
 				for _, p := range pitches {
 					key := voiceKey{ch, uint8(p)}
 					if _, ok := pending[key]; ok {

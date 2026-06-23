@@ -37,3 +37,11 @@ type Cell struct {
 
 // CellSeq is a sequence of cells for one measure.
 type CellSeq []Cell
+
+// MeasureRow contains the three columns for one measure's display:
+// chord symbols, notation notes, and lyrics.
+type MeasureRow struct {
+	ChordCells CellSeq
+	NoteCells  CellSeq
+	LyricCells CellSeq
+}

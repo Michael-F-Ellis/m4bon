@@ -42,7 +42,8 @@ m4bon/
 ├── frac/
 │   └── frac.go              # Fraction type, GCD, power-of-2 helpers (shared)
 ├── theory/
-│   └── theory.go            # NoteOffsets, FifthsToAccidentalMap, EffectiveAccidental
+│   ├── theory.go            # NoteOffsets, FifthsToAccidentalMap, EffectiveAccidental
+│   └── chords.go            # Chord symbol normalization (NormalizeChordSymbol)
 ├── midi/
 │   ├── generate.go          # SMF generation, voiceToChannel
 │   └── generate_test.go
@@ -80,6 +81,8 @@ m4bon/
 | Chord open | `(` |
 | Chord close | `)` |
 | Barline (ignored) | `|` |
+| Chord symbols | `:H` |
+| Lyrics | `:L` |
 
 ### Time signature → beat resolution
 
@@ -138,12 +141,56 @@ Voice indices are 1-based by entry position. Sustains extend the same voice's pr
 - Relative octave (Lilypond "closest interval" rule)
 - `^` / `/` force octave up/down
 
+### Chord symbols (`:H`)
+
+Optional per-measure directive. Appears after notation, before `|`. One chord symbol per beat; `-` = sustain, `;` = rest.
+
+```
+M4/4 c d e f :H C - G7 - |          # four beats: C major, sustain, G7, sustain
+M4/4 c d e f :L My heart is sad :H C - G7 - |  # order-independent
+```
+
+Input grammar (keyboard-friendly):
+
+| Input | Display | Input | Display |
+|---|---|---|---|
+| `C` | C | `C7` | C⁷ |
+| `Cm`, `C-`, `Cmin` | C⁻ | `Cm7`, `C-7` | C⁻⁷ |
+| `Cdim`, `C°` | C° | `Cmaj7`, `CΔ`, `CΔ7` | C∆⁷ |
+| `Chdim`, `Cø`, `Cm7b5` | Cø⁷ | `C7♯9`, `C7#9` | C⁷♯⁹ |
+| `Caug`, `C+` | C⁺ | `Csus`, `Csus4` | Csus⁴ |
+| `C♯`, `C#` | C (red) | `C♭`, `C&` | C (blue) |
+
+Root accidentals: color only (same scheme as notation). Extension accidentals use ♯/♭ glyphs.
+
+### Lyrics (`:L`)
+
+Optional per-measure directive. One syllable per active-note attack. Special tokens:
+
+| Token | Meaning |
+|---|---|
+| `-` | Syllable extension |
+| `*` | Melisma (note belongs to current syllable) |
+| `_` | Multi-syllable within one beat |
+| `no_thing` | Two syllables "no" + "thing" on one note |
+
+```
+M4/4 ;e fe f e :L My heart is sad and |
+M4/4 g - ag fe :L Glo - ** ** |
+M4/4 cd ec ^g /c :L no_thing more_than feel ings. |
+```
+
+### Render output
+
+Three-column layout in `-render` and TUI: `CHORDS : NOTES : LYRICS`. Columns only appear when at least one measure has that directive.
+
 ---
 
 ## Pipeline
 
 ```
-DSL text → stripDirectives (extract K, M) → sanitize → tokenize → parseGroup
+DSL text → stripDirectives (extract K, M) → sanitize → tokenize
+         → extractDirectivesTail (:H, :L) → parseGroup
          → resolveDurations → splitAtBarline → splitNonStandardDurations → resolveOctaves → MusicXML
 ```
 
@@ -173,9 +220,11 @@ Examples:
   m4bon "c d e f"
   m4bon "M6/8 abc def"
   m4bon -f test/cases/basic-notes.dsl -o out.mxl
-  m4bon -render "M4/4 c d e f"        # Colorized text output
-  m4bon -tui                          # Launch TUI (empty state)
-  m4bon -tui -f score.dsl -bpm 96     # TUI with file + custom tempo
+  m4bon -render "M4/4 c d e f"                 # Colorized text output
+  m4bon -render "M4/4 c d e f :H C - G7 -"     # With chord symbols
+  m4bon -render "M4/4 c d e f :L My heart is sad"  # With lyrics
+  m4bon -tui                                   # Launch TUI (empty state)
+  m4bon -tui -f score.dsl -bpm 96              # TUI with file + custom tempo
 ```
 
 ---
@@ -220,6 +269,7 @@ import "github.com/mellis/m4bon"
 
 xml, err := m4bon.Compile("M4/4 (c) (-e) (-g) | (-f) (d-) (b-) | (ce) - -")
 text, err := m4bon.Render("M4/4 c d e f")  // ANSI-escaped color text
+text, err := m4bon.Render("M4/4 c d e f :H C - G7 - :L My heart is sad")  // three-column
 
 // MIDI generation (darwin+cgo only)
 import "github.com/mellis/m4bon/midi"

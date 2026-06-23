@@ -343,6 +343,165 @@ func TestParseVoicePolyThreeGroupSustain(t *testing.T) {
 	}
 }
 
+func TestExtractChordDirective(t *testing.T) {
+	r := ParseDSL("M4/4 c d e f :H C - G7 - |")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	if len(r.Measures) == 0 {
+		t.Fatal("expected at least one measure")
+	}
+	m := r.Measures[0]
+	if !m.HasChords {
+		t.Error("expected HasChords to be true")
+	}
+	if m.HasLyrics {
+		t.Error("expected HasLyrics to be false")
+	}
+	expected := []string{"C", "-", "G7", "-"}
+	if len(m.Chords) != len(expected) {
+		t.Fatalf("expected %d chords, got %d", len(expected), len(m.Chords))
+	}
+	for i, e := range expected {
+		if m.Chords[i] != e {
+			t.Errorf("chord %d: expected %q, got %q", i, e, m.Chords[i])
+		}
+	}
+	// Existing events still parse correctly
+	if len(m.Events) != 4 {
+		t.Errorf("expected 4 note events, got %d", len(m.Events))
+	}
+}
+
+func TestExtractLyricDirective(t *testing.T) {
+	r := ParseDSL("M4/4 c d e f :L My heart is sad |")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	if len(r.Measures) == 0 {
+		t.Fatal("expected at least one measure")
+	}
+	m := r.Measures[0]
+	if !m.HasLyrics {
+		t.Error("expected HasLyrics to be true")
+	}
+	if m.HasChords {
+		t.Error("expected HasChords to be false")
+	}
+	expected := []string{"My", "heart", "is", "sad"}
+	if len(m.Lyrics) != len(expected) {
+		t.Fatalf("expected %d lyrics, got %d", len(expected), len(m.Lyrics))
+	}
+	for i, e := range expected {
+		if m.Lyrics[i] != e {
+			t.Errorf("lyric %d: expected %q, got %q", i, e, m.Lyrics[i])
+		}
+	}
+	if len(m.Events) != 4 {
+		t.Errorf("expected 4 note events, got %d", len(m.Events))
+	}
+}
+
+func TestExtractBothOrderIndependent(t *testing.T) {
+	// :H before :L
+	r := ParseDSL("M4/4 c d e f :H C - G7 - :L My heart is sad |")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	m := r.Measures[0]
+	if !m.HasChords || !m.HasLyrics {
+		t.Errorf("expected both HasChords and HasLyrics, got HasChords=%v HasLyrics=%v", m.HasChords, m.HasLyrics)
+	}
+	if len(m.Chords) != 4 {
+		t.Errorf("expected 4 chords, got %d", len(m.Chords))
+	}
+	if len(m.Lyrics) != 4 {
+		t.Errorf("expected 4 lyrics, got %d", len(m.Lyrics))
+	}
+
+	// :L before :H (order-independent)
+	r2 := ParseDSL("M4/4 c d e f :L My heart is sad :H C - G7 - |")
+	if r2.Err != nil {
+		t.Fatalf("unexpected error: %v", r2.Err)
+	}
+	m2 := r2.Measures[0]
+	if !m2.HasChords || !m2.HasLyrics {
+		t.Errorf("expected both HasChords and HasLyrics, got HasChords=%v HasLyrics=%v", m2.HasChords, m2.HasLyrics)
+	}
+	if len(m2.Chords) != 4 {
+		t.Errorf("expected 4 chords, got %d", len(m2.Chords))
+	}
+	if len(m2.Lyrics) != 4 {
+		t.Errorf("expected 4 lyrics, got %d", len(m2.Lyrics))
+	}
+}
+
+func TestNoDirectives(t *testing.T) {
+	r := ParseDSL("M4/4 c d e f |")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	m := r.Measures[0]
+	if m.HasChords {
+		t.Error("expected HasChords to be false")
+	}
+	if m.HasLyrics {
+		t.Error("expected HasLyrics to be false")
+	}
+	if len(m.Chords) != 0 {
+		t.Errorf("expected empty chords, got %v", m.Chords)
+	}
+	if len(m.Lyrics) != 0 {
+		t.Errorf("expected empty lyrics, got %v", m.Lyrics)
+	}
+}
+
+func TestEmptyDirectiveIgnored(t *testing.T) {
+	// Empty :H and :L directives are accepted (no tokens between them and |)
+	// but produce empty slices and HasChords/HasLyrics are false.
+	r := ParseDSL("M4/4 c d e f :H :L |")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	m := r.Measures[0]
+	if m.HasChords {
+		t.Error("expected HasChords to be false (empty :H)")
+	}
+	if m.HasLyrics {
+		t.Error("expected HasLyrics to be false (empty :L)")
+	}
+	if len(m.Chords) != 0 {
+		t.Errorf("expected empty chords, got %v", m.Chords)
+	}
+	if len(m.Lyrics) != 0 {
+		t.Errorf("expected empty lyrics, got %v", m.Lyrics)
+	}
+}
+
+func TestMultiMeasureChordLyric(t *testing.T) {
+	r := ParseDSL("M4/4 c d e f :H C - G7 - | M4/4 a b c d :L One two three four |")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	if len(r.Measures) != 2 {
+		t.Fatalf("expected 2 measures, got %d", len(r.Measures))
+	}
+	m0 := r.Measures[0]
+	m1 := r.Measures[1]
+	if !m0.HasChords || m0.HasLyrics {
+		t.Errorf("measure 0: expected chords only")
+	}
+	if !m1.HasLyrics || m1.HasChords {
+		t.Errorf("measure 1: expected lyrics only")
+	}
+	if len(m0.Chords) != 4 {
+		t.Errorf("measure 0: expected 4 chords, got %d", len(m0.Chords))
+	}
+	if len(m1.Lyrics) != 4 {
+		t.Errorf("measure 1: expected 4 lyrics, got %d", len(m1.Lyrics))
+	}
+}
+
 func validateEvents(t *testing.T, events []Event) {
 	t.Helper()
 	for i, ev := range events {

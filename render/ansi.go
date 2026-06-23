@@ -102,3 +102,124 @@ func FormatPlain(measures []CellSeq) string {
 	}
 	return b.String()
 }
+
+// FormatANSIRows converts MeasureRows into an ANSI-escaped string with
+// three-column layout (chords, notes, lyrics), padding each column to
+// its maximum width. Newlines separate measures.
+func FormatANSIRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int, asciiLeaps bool) string {
+	var b strings.Builder
+	for ri, row := range rows {
+		if ri > 0 {
+			b.WriteByte('\n')
+		}
+
+		// Chord column: left-justified, padded to maxChordW
+		if maxChordW > 0 {
+			writeCellSeq(&b, row.ChordCells, asciiLeaps)
+			padW := maxChordW - visibleLen(row.ChordCells)
+			b.WriteString(strings.Repeat(" ", padW))
+			b.WriteString("    ") // 4-space gap
+		}
+
+		// Note column
+		writeCellSeq(&b, row.NoteCells, asciiLeaps)
+		if maxLyricW > 0 {
+			padW := maxNoteW - visibleLen(row.NoteCells)
+			b.WriteString(strings.Repeat(" ", padW))
+			b.WriteString("    ") // 4-space gap
+
+			// Lyric column: left-justified
+			writeCellSeq(&b, row.LyricCells, asciiLeaps)
+		}
+	}
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// FormatPlainRows converts MeasureRows into plain text with three-column layout.
+func FormatPlainRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int) string {
+	var b strings.Builder
+	for ri, row := range rows {
+		if ri > 0 {
+			b.WriteByte('\n')
+		}
+		if maxChordW > 0 {
+			plainWriteCells(&b, row.ChordCells)
+			padW := maxChordW - visibleLen(row.ChordCells)
+			b.WriteString(strings.Repeat(" ", padW))
+			b.WriteString("    ")
+		}
+		plainWriteCells(&b, row.NoteCells)
+		if maxLyricW > 0 {
+			padW := maxNoteW - visibleLen(row.NoteCells)
+			b.WriteString(strings.Repeat(" ", padW))
+			b.WriteString("    ")
+			plainWriteCells(&b, row.LyricCells)
+		}
+	}
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// writeCellSeq writes a CellSeq with ANSI escapes to a builder.
+func writeCellSeq(b *strings.Builder, cells CellSeq, asciiLeaps bool) {
+	for _, c := range cells {
+		baseContent := c.Content
+		subscript := c.Subscript
+
+		var unicodeLeap string
+		if !asciiLeaps {
+			switch c.Leap {
+			case LeapUp:
+				unicodeLeap = combiningCirc
+			case LeapDown:
+				unicodeLeap = combiningMacr
+			}
+		}
+
+		var leapPrefix string
+		if asciiLeaps {
+			switch c.Leap {
+			case LeapUp:
+				leapPrefix = ansiOverline
+			case LeapDown:
+				leapPrefix = ansiUnderline
+			}
+		}
+
+		if c.Style != StyleDefault || c.Italic || leapPrefix != "" {
+			b.WriteString(leapPrefix)
+			if c.Style != StyleDefault {
+				b.WriteString(ansiColor(c.Style))
+			}
+			if c.Italic {
+				b.WriteString("\033[3m")
+			}
+			b.WriteString(baseContent)
+			b.WriteString(unicodeLeap)
+			b.WriteString(subscript)
+			b.WriteString(ansiReset)
+		} else {
+			b.WriteString(baseContent)
+			b.WriteString(unicodeLeap)
+			b.WriteString(subscript)
+		}
+	}
+}
+
+// plainWriteCells writes a CellSeq as plain text to a builder.
+func plainWriteCells(b *strings.Builder, cells CellSeq) {
+	for _, c := range cells {
+		b.WriteString(c.Content)
+		b.WriteString(c.Subscript)
+	}
+}
+
+// stripTrailingNewline returns a copy of cells with the trailing newline
+// cell removed, if present.
+func stripTrailingNewline(cells CellSeq) CellSeq {
+	if len(cells) > 0 && cells[len(cells)-1].Content == "\n" {
+		return cells[:len(cells)-1]
+	}
+	return cells
+}

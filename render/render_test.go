@@ -608,3 +608,172 @@ func TestLeapMeasure3(t *testing.T) {
 		t.Errorf("/&e should be LeapDown (octave down), got %v", eCell.Leap)
 	}
 }
+
+// --- Three-column layout tests ---
+
+// allRows calls BuildRows on parsed DSL for all measures.
+func allRows(t *testing.T, dsl string) ([]MeasureRow, int, int, int) {
+	t.Helper()
+	r := parser.ParseDSL(dsl)
+	if r.Err != nil {
+		t.Fatalf("ParseDSL(%q): %v", dsl, r.Err)
+	}
+	return BuildRows(r.Measures, true)
+}
+
+func TestRenderChordsOnly(t *testing.T) {
+	rows, _, _, _ := allRows(t, "M4/4 c d e f :H C - G7 - |")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	row := rows[0]
+	if len(row.ChordCells) == 0 {
+		t.Fatal("expected chord cells")
+	}
+	if len(row.LyricCells) != 0 {
+		t.Fatal("expected no lyric cells")
+	}
+	// Chord cells should contain chord content
+	foundG7 := false
+	for _, c := range row.ChordCells {
+		if strings.Contains(c.Content, "G") && strings.Contains(c.Content, "\u2077") {
+			foundG7 = true
+		}
+	}
+	if !foundG7 {
+		t.Error("expected G⁷ in chord cells")
+	}
+}
+
+func TestRenderLyricsOnly(t *testing.T) {
+	rows, _, _, _ := allRows(t, "M4/4 c d e f :L My heart is sad |")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	row := rows[0]
+	if len(row.ChordCells) != 0 {
+		t.Fatal("expected no chord cells")
+	}
+	if len(row.LyricCells) == 0 {
+		t.Fatal("expected lyric cells")
+	}
+	// First lyric token should be "My"
+	foundMy := false
+	for _, c := range row.LyricCells {
+		if c.Content == "My" {
+			foundMy = true
+		}
+	}
+	if !foundMy {
+		t.Error("expected 'My' in lyric cells")
+	}
+}
+
+func TestRenderBothColumns(t *testing.T) {
+	rows, _, _, _ := allRows(t, "M4/4 c d e f :H C - G7 - :L My heart is sad |")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	row := rows[0]
+	if len(row.ChordCells) == 0 {
+		t.Fatal("expected chord cells")
+	}
+	if len(row.LyricCells) == 0 {
+		t.Fatal("expected lyric cells")
+	}
+	if len(row.NoteCells) == 0 {
+		t.Fatal("expected note cells")
+	}
+}
+
+func TestRenderNoDirectives(t *testing.T) {
+	rows, _, _, _ := allRows(t, "M4/4 c d e f |")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	row := rows[0]
+	if len(row.ChordCells) != 0 {
+		t.Fatal("expected no chord cells")
+	}
+	if len(row.LyricCells) != 0 {
+		t.Fatal("expected no lyric cells")
+	}
+	if len(row.NoteCells) == 0 {
+		t.Fatal("expected note cells")
+	}
+}
+
+func TestRenderLyricWithUnderscore(t *testing.T) {
+	rows, _, _, _ := allRows(t, "M4/4 c d e f :L no_thing more_than |")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	row := rows[0]
+	// Should have split "no_thing" into cells for "no", "_", "thing"
+	foundUnderscore := false
+	for _, c := range row.LyricCells {
+		if c.Content == "_" {
+			foundUnderscore = true
+		}
+	}
+	if !foundUnderscore {
+		t.Error("expected '_' separator in lyric cells for no_thing")
+	}
+}
+
+func TestRenderLyricMelisma(t *testing.T) {
+	rows, _, _, _ := allRows(t, "M4/4 g - ag fe :L Glo - ** ** |")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	row := rows[0]
+	foundStar := false
+	for _, c := range row.LyricCells {
+		if c.Content == "*" {
+			foundStar = true
+		}
+	}
+	if !foundStar {
+		t.Error("expected '*' melisma in lyric cells")
+	}
+}
+
+func TestRenderLyricAfterRest(t *testing.T) {
+	// The rest `;` in ;e should NOT consume a lyric token.
+	// Lyric tokens map only to active note attacks.
+	rows, _, _, _ := allRows(t, "M4/4 ;e fe f e :L My heart is sad |")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	row := rows[0]
+	foundMy := false
+	for _, c := range row.LyricCells {
+		if c.Content == "My" {
+			foundMy = true
+		}
+	}
+	if !foundMy {
+		t.Error("expected 'My' in lyric cells (rest should not consume lyric)")
+	}
+}
+
+func TestFormatPlainRowsThreeColumn(t *testing.T) {
+	r := parser.ParseDSL("M4/4 c d e f :H C - G7 - :L My heart is sad |")
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	rows, maxCW, maxNW, maxLW := BuildRows(r.Measures, true)
+	plain := FormatPlainRows(rows, maxCW, maxNW, maxLW)
+	if !strings.Contains(plain, "C") {
+		t.Error("expected chord 'C' in plain output")
+	}
+	if !strings.Contains(plain, "My") {
+		t.Error("expected lyric 'My' in plain output")
+	}
+	if !strings.Contains(plain, "c") {
+		t.Error("expected note 'c' in plain output")
+	}
+	if !strings.HasSuffix(plain, "\n") {
+		t.Error("expected trailing newline")
+	}
+}

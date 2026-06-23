@@ -204,6 +204,13 @@ type MeasureResult struct {
 	IsPickup   bool
 	NumGroups  int  // number of beat groups in the DSL input for this measure
 	GroupSlots []int // number of slots per beat group (indexed by GroupIdx), for render
+	GroupMults []int // beat multiplier per beat group (indexed by GroupIdx), for render
+
+	// Chord symbols & lyrics (extracted from :H and :L directives)
+	Chords    []string // one per beat group; nil/empty if no :H directive
+	Lyrics    []string // one entry per active-note attack; nil/empty if no :L directive
+	HasChords bool
+	HasLyrics bool
 }
 
 // BeatDuration codes for B directive.
