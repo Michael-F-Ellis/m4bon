@@ -356,35 +356,21 @@ func chordStyleForAccidental(acc int) StyleClass {
 }
 
 // buildLyricCells produces cells for the lyric syllables of a measure.
-// Lyrics map 1:1 to active note attacks in the measure's events (skipping
-// Split/tuplet/rest events).
+// Lyrics map 1:1 to positions in the measure (including rests and sustains).
 func buildLyricCells(m parser.MeasureResult) CellSeq {
 	if !m.HasLyrics || len(m.Lyrics) == 0 {
 		return nil
 	}
-	if len(m.Events) == 0 {
-		return nil
-	}
 
 	var cells CellSeq
-	li := 0 // index into m.Lyrics
-	first := true
-	for _, ev := range m.Events {
-		if ev.Type == parser.EventTupletStart || ev.Split {
-			continue
-		}
-		if ev.Type == parser.EventRest {
-			continue
-		}
-		if li >= len(m.Lyrics) {
-			break
-		}
-		if !first {
+	for i, token := range m.Lyrics {
+		if i > 0 {
 			cells = append(cells, Cell{Content: " ", Style: StyleDefault})
 		}
-		token := m.Lyrics[li]
 		if token == "-" {
 			cells = append(cells, Cell{Content: "-", Style: StyleSustainRest})
+		} else if token == ";" {
+			cells = append(cells, Cell{Content: ";", Style: StyleSustainRest})
 		} else if token == "*" || strings.Trim(token, "*") == "" {
 			cells = append(cells, Cell{Content: "*", Style: StyleSustainRest})
 		} else if strings.Contains(token, "_") {
@@ -398,8 +384,6 @@ func buildLyricCells(m parser.MeasureResult) CellSeq {
 		} else {
 			cells = append(cells, Cell{Content: token, Style: StyleDefault})
 		}
-		li++
-		first = false
 	}
 	return cells
 }

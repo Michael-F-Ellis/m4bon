@@ -43,9 +43,10 @@ m4bon/
 │   └── frac.go              # Fraction type, GCD, power-of-2 helpers (shared)
 ├── theory/
 │   ├── theory.go            # NoteOffsets, FifthsToAccidentalMap, EffectiveAccidental
-│   └── chords.go            # Chord symbol normalization (NormalizeChordSymbol)
+│   ├── chords.go            # Chord symbol normalization, ChordRoot extraction
+│   └── chords_test.go
 ├── midi/
-│   ├── generate.go          # SMF generation, voiceToChannel
+│   ├── generate.go          # SMF generation with SMFOptions, chord root track
 │   └── generate_test.go
 ├── test/
 │   └── cases/               # .dsl + .expected.mxml test case files
@@ -165,11 +166,12 @@ Root accidentals: color only (same scheme as notation). Extension accidentals us
 
 ### Lyrics (`:L`)
 
-Optional per-measure directive. One syllable per active-note attack. Special tokens:
+Optional per-measure directive. One syllable per position (including rests and sustains). Lyrics for rests (`;`) and sustains (`-`) render as grey dashes/semicolons in the lyric column. Special tokens:
 
 | Token | Meaning |
 |---|---|
-| `-` | Syllable extension |
+| `-` | Syllable extension on sustain position |
+| `;` | Rest syllable (lyric continues through silence) |
 | `*` | Melisma (note belongs to current syllable) |
 | `_` | Multi-syllable within one beat |
 | `no_thing` | Two syllables "no" + "thing" on one note |
@@ -178,6 +180,7 @@ Optional per-measure directive. One syllable per active-note attack. Special tok
 M4/4 ;e fe f e :L My heart is sad and |
 M4/4 g - ag fe :L Glo - ** ** |
 M4/4 cd ec ^g /c :L no_thing more_than feel ings. |
+M4/4 a - - ; :L mance. - - ; |              # dashes/semicolons rendered in lyric column
 ```
 
 ### Render output
@@ -233,15 +236,39 @@ Examples:
 
 The `midi` package (macOS-only via `//go:build darwin && cgo`) provides:
 
-- `GenerateSMF(measures, bpm)` → `([]byte, Timeline, error)` — SMF bytes with score notes (ch1-3), metronome (ch10), and tempo map
+- `GenerateSMF(measures, bpm)` → `([]byte, Timeline, error)` — backward-compat wrapper (metronome on, no roots)
+- `GenerateSMFWithOptions(measures, bpm, opts)` → `([]byte, Timeline, error)` — full control via `SMFOptions`
 - `GenerateMetronomeOnly(measures, bpm)` → `([]byte, Timeline, error)` — Metronome-only SMF
+
+`SMFOptions` has `Metronome bool`, `Roots bool`, `Backbeats bool`. Root track uses MIDI channel 8 (Fingered Electric Bass, program 33) in bass range E1–E2 (octave-shifted to 3 if below MIDI 28).
 
 `Timeline` has `MeasureStarts []time.Duration`, `TotalDuration`, `TempoBPM`.
 
 ## TUI Application
 
-Key bindings: space=play/pause, s=stop, [/]=tempo±5, {/}=tempo±1, 0=reset 120,
-↑/↓=volume, ←/→=seek measure, j/k=scroll, ?=help, q=quit. Lives in `cmd/m4bon/tui/`.
+The TUI (macOS-only) is a self-contained rehearsal tool with transport-based playback, metronome options, chord root playback, and recording. Key bindings:
+
+| Key | Action |
+|-----|--------|
+| `space` | Play / Pause (disabled during recording) |
+| `s` | Stop (also stops recording) |
+| `r` | Start / stop recording |
+| `m` | Toggle metronome |
+| `b` | Toggle backbeats (click on 2 and 4) |
+| `R` | Toggle chord roots |
+| `[` / `]` | Tempo -5 / +5 BPM |
+| `{` / `}` | Tempo -1 / +1 BPM |
+| `0` | Reset tempo to 120 |
+| `↑` / `↓` | Seek start measure -1 / +1 |
+| `⇧↑` / `⇧↓` | Seek end measure -1 / +1 |
+| `←` / `→` | Volume down / up |
+| `j` / `k` | Scroll down / up |
+| `o` | Toggle octave subscripts |
+| `u` | Reload from source file |
+| `q` | Quit |
+| `?` | Toggle help |
+
+All playback goes through `macaudio.Transport` — a single proxy that routes to MIDI or recording playback. Recording is ephemeral and one-at-a-time.
 
 ## Essential Commands
 
@@ -276,6 +303,10 @@ import "github.com/mellis/m4bon/midi"
 import "github.com/mellis/m4bon/parser"
 measures := parser.ParseDSL("M4/4 c d e f")
 smfBytes, timeline, err := midi.GenerateSMF(measures.Measures, 120)
+
+// With options:
+opts := midi.SMFOptions{Metronome: true, Roots: true, Backbeats: true}
+smfBytes, timeline, err := midi.GenerateSMFWithOptions(measures.Measures, 120, opts)
 ```
 
 ---
@@ -305,6 +336,10 @@ smfBytes, timeline, err := midi.GenerateSMF(measures.Measures, 120)
 | Leap detection from octave marks only | Lilypond rule guarantees no leap > 4th without `^`/`/`. `leapFromShift(OctaveShift)` replaces complex interval computation |
 | File watching via `tea.Every` restart loop | BubbleTea's `tea.Every` fires once; file polling requires returning a non-nil message from the callback and restarting the timer from `Update` |
 | TUI subscript toggle (`o` key) | Subscripts default off in TUI; `showSubscripts` threaded through `render.Render → BuildCells → octaveSubscript` |
+| Transport proxy for all playback | All play/pause/stop/seek/volume calls route through `m.transport` — a single proxy that can switch between MIDIPlayer and Recording without changing callers |
+| SMF regeneration for option changes | Metronome/roots/backbeats toggles regenerate the SMF (sub-ms) rather than using per-channel volume — SMF files are <10KB |
+| Lyric column from token list, not events | `buildLyricCells` iterates `m.Lyrics` directly (not `m.Events`) because pipeline may merge sustains into fewer events than lyric positions |
+| ChordRoot uses normalizeRoot | `theory.ChordRoot(raw)` delegates to the existing `normalizeRoot` (which handles `&`/`#` accidentals), just adds the `-`/`;` guard |
 
 ---
 
@@ -338,3 +373,4 @@ When `-render` is set, each measure is output as one line:
 - Render accidentals follow measure-level persistence (an accidental on a letter affects subsequent same-letter notes), which matches Engraving Rules but differs from some DAW conventions that reset per beat.
 - Sustains across barlines use the relative-octave pitch of the source note, not the absolute octave from `^`/`/`. `OctaveShift` is intentionally zeroed on sustain events.
 - TUI line truncation (`view.go`) is ANSI-aware and rune-safe; the old byte-based slicing could bisect ANSI sequences and garble the display.
+- `buildLyricCells` previously skipped `EventRest` and `Split` events, causing lyric tokens for rests/sustains to be silently dropped. Now iterates `m.Lyrics` directly and renders `;` tokens in grey (matching rest/sustain style in note column).

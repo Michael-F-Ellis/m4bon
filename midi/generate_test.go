@@ -381,6 +381,149 @@ func TestGenerateSMF_EmptyMeasuresNoNotes(t *testing.T) {
 	}
 }
 
+func TestGenerateSMF_Options_MetronomeOff(t *testing.T) {
+	measures := parseDSL(t, "c d e f")
+	_, _, err := GenerateSMFWithOptions(measures, 120, SMFOptions{Metronome: false})
+	if err != nil {
+		t.Fatalf("GenerateSMFWithOptions: %v", err)
+	}
+}
+
+func TestGenerateSMF_Roots(t *testing.T) {
+	measures := parseDSL(t, "M4/4 c d e f :H C - G7 - |")
+	data, _, err := GenerateSMFWithOptions(measures, 120, SMFOptions{Metronome: true, Roots: true})
+	if err != nil {
+		t.Fatalf("GenerateSMFWithOptions: %v", err)
+	}
+	events, err := ParseSMFToEvents(data)
+	if err != nil {
+		t.Fatalf("ParseSMFToEvents: %v", err)
+	}
+
+	// Verify events on channel 8 with correct pitches at beat positions
+	ch8Ons := filterEvents(events, "note_on", 8)
+	if len(ch8Ons) < 2 {
+		t.Fatalf("got %d root note_on events on ch8, want >= 2", len(ch8Ons))
+	}
+	// C2 = MIDI 24, shifted to C3 = 36 (below E1 threshold 28)
+	// G2 = MIDI 31 (stays, >= 28)
+	expectedRoots := []uint8{36, 31}
+	for i, e := range ch8Ons[:len(expectedRoots)] {
+		if e.Note != expectedRoots[i] {
+			t.Errorf("root[%d] note = %d, want %d", i, e.Note, expectedRoots[i])
+		}
+	}
+
+	// Verify metronome also present
+	metroOns := filterEvents(events, "note_on", 9)
+	if len(metroOns) < 4 {
+		t.Fatalf("got %d metronome events, want >= 4", len(metroOns))
+	}
+
+	// Verify score notes on ch1
+	ch1Ons := filterEvents(events, "note_on", 0)
+	if len(ch1Ons) < 4 {
+		t.Fatalf("got %d note_on events on ch1, want >= 4", len(ch1Ons))
+	}
+
+	// Verify program change on root track (channel 8, Fingered Electric Bass = 33)
+	pcEvents := filterEvents(events, "program_change", 8)
+	if len(pcEvents) != 1 {
+		t.Fatalf("got %d program_change events on ch8, want 1", len(pcEvents))
+	}
+	if pcEvents[0].Program != 33 {
+		t.Errorf("program_change program = %d, want 33 (Fingered Electric Bass)", pcEvents[0].Program)
+	}
+}
+
+func TestGenerateSMF_Roots_NoChords(t *testing.T) {
+	measures := parseDSL(t, "c d e f")
+	data, _, err := GenerateSMFWithOptions(measures, 120, SMFOptions{Roots: true})
+	if err != nil {
+		t.Fatalf("GenerateSMFWithOptions: %v", err)
+	}
+	events, err := ParseSMFToEvents(data)
+	if err != nil {
+		t.Fatalf("ParseSMFToEvents: %v", err)
+	}
+
+	// No events on channel 8
+	ch8Events := filterEvents(events, "note_on", 8)
+	if len(ch8Events) != 0 {
+		t.Errorf("got %d note_on events on ch8 for measures without chords, want 0", len(ch8Events))
+	}
+}
+
+func TestGenerateSMF_Options(t *testing.T) {
+	measures := parseDSL(t, "M4/4 c d e f :H C - G7 - |")
+
+	// No metronome, no roots
+	data1, _, err := GenerateSMFWithOptions(measures, 120, SMFOptions{})
+	if err != nil {
+		t.Fatalf("GenerateSMFWithOptions({}): %v", err)
+	}
+	events1, _ := ParseSMFToEvents(data1)
+	if len(filterEvents(events1, "note_on", 9)) != 0 {
+		t.Error("metronome events with Metronome:false")
+	}
+	if len(filterEvents(events1, "note_on", 8)) != 0 {
+		t.Error("root events with Roots:false")
+	}
+
+	// Metronome only
+	data2, _, err := GenerateSMFWithOptions(measures, 120, SMFOptions{Metronome: true})
+	if err != nil {
+		t.Fatalf("GenerateSMFWithOptions(Metronome): %v", err)
+	}
+	events2, _ := ParseSMFToEvents(data2)
+	if len(filterEvents(events2, "note_on", 9)) < 4 {
+		t.Error("missing metronome events with Metronome:true")
+	}
+	if len(filterEvents(events2, "note_on", 8)) != 0 {
+		t.Error("root events with Roots:false")
+	}
+
+	// Both
+	data3, _, err := GenerateSMFWithOptions(measures, 120, SMFOptions{Metronome: true, Roots: true})
+	if err != nil {
+		t.Fatalf("GenerateSMFWithOptions(both): %v", err)
+	}
+	events3, _ := ParseSMFToEvents(data3)
+	if len(filterEvents(events3, "note_on", 9)) < 4 {
+		t.Error("missing metronome events with both")
+	}
+	if len(filterEvents(events3, "note_on", 8)) == 0 {
+		t.Error("missing root events with Roots:true")
+	}
+}
+
+func TestGenerateSMF_Backbeats(t *testing.T) {
+	measures := parseDSL(t, "M4/4 c d e f | a b c d")
+	data, _, err := GenerateSMFWithOptions(measures, 120, SMFOptions{Metronome: true, Backbeats: true})
+	if err != nil {
+		t.Fatalf("GenerateSMFWithOptions backbeats: %v", err)
+	}
+	events, err := ParseSMFToEvents(data)
+	if err != nil {
+		t.Fatalf("ParseSMFToEvents: %v", err)
+	}
+
+	metroOns := filterEvents(events, "note_on", 9)
+	// 4/4 over 2 measures: 2 backbeats per measure = 4 total
+	if len(metroOns) != 4 {
+		t.Fatalf("got %d metronome note_on with backbeats, want 4 (2 per measure × 2 measures)", len(metroOns))
+	}
+	// All backbeat clicks should use note 77 (weak), never 76 (downbeat)
+	for i, m := range metroOns {
+		if m.Note != 77 {
+			t.Errorf("backbeat[%d] note = %d, want 77", i, m.Note)
+		}
+		if m.Velocity != 80 {
+			t.Errorf("backbeat[%d] velocity = %d, want 80", i, m.Velocity)
+		}
+	}
+}
+
 // --- Helpers ---
 
 type SMFEvent struct {
@@ -389,6 +532,7 @@ type SMFEvent struct {
 	Type     string
 	Note     uint8
 	Velocity uint8
+	Program  uint8
 	BPM      float64
 }
 
@@ -456,6 +600,11 @@ func ParseSMFToEvents(data []byte) ([]SMFEvent, error) {
 					continue
 				}
 				events = append(events, SMFEvent{Tick: tick, Channel: channel, Type: "note_off", Note: msg[1]})
+			case 0xC0:
+				if len(msg) < 2 {
+					continue
+				}
+				events = append(events, SMFEvent{Tick: tick, Channel: channel, Type: "program_change", Program: msg[1]})
 			}
 		}
 	}

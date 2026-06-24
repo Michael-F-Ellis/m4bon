@@ -55,6 +55,11 @@ type model struct {
 	recorder    macaudio.Recorder
 	recording   *macaudio.Recording
 
+	// Toggle state
+	metronomeOn bool // toggled by 'm', default true
+	rootsOn     bool // toggled by 'R', default false
+	backbeatsOn bool // toggled by 'b', default false
+
 	// UI state
 	width          int
 	height         int
@@ -101,6 +106,8 @@ func initialModel(dslText, dslLabel string, measures []parser.MeasureResult, smf
 		currentMeasure:  0,
 		asciiLeaps:      asciiLeaps,
 		sourceFile:      sourceFile,
+		metronomeOn:     true,
+		rootsOn:         false,
 	}
 
 	if len(measures) > 0 {
@@ -168,7 +175,12 @@ func (m *model) loadMIDIPlayer() error {
 
 // regenerateSMF regenerates the SMF at the current BPM and reloads it.
 func (m *model) regenerateSMF() error {
-	data, tl, err := midi.GenerateSMF(m.measures, m.bpm)
+	opts := midi.SMFOptions{
+		Metronome: m.metronomeOn,
+		Roots:     m.rootsOn,
+		Backbeats: m.backbeatsOn,
+	}
+	data, tl, err := midi.GenerateSMFWithOptions(m.measures, m.bpm, opts)
 	if err != nil {
 		return fmt.Errorf("regenerate SMF: %w", err)
 	}
@@ -292,7 +304,11 @@ func (m *model) reloadMeasures() string {
 		return "no measures produced"
 	}
 
-	smfBytes, tl, err := midi.GenerateSMF(result.Measures, m.bpm)
+	smfBytes, tl, err := midi.GenerateSMFWithOptions(result.Measures, m.bpm, midi.SMFOptions{
+		Metronome: m.metronomeOn,
+		Roots:     m.rootsOn,
+		Backbeats: m.backbeatsOn,
+	})
 	if err != nil {
 		return fmt.Sprintf("generate SMF: %v", err)
 	}

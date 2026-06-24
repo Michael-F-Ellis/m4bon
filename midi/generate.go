@@ -7,10 +7,12 @@ package midi
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/mellis/m4bon/frac"
 	"github.com/mellis/m4bon/parser"
+	"github.com/mellis/m4bon/theory"
 	"gitlab.com/gomidi/midi/v2/smf"
 )
 
@@ -91,8 +93,23 @@ func buildTrackFromEvents(events []timedEvent) smf.Track {
 	return track
 }
 
-// GenerateSMF produces a Standard MIDI File from parsed measures.
+// SMFOptions controls which auxiliary tracks are included in the SMF.
+type SMFOptions struct {
+	Metronome bool // include metronome track (MIDI channel 9)
+	Roots     bool // include chord root track (MIDI channel 8, bass range)
+	Backbeats bool // metronome clicks only on even-numbered beats (1-based: 2, 4, 6...)
+}
+
+// rootChannel is the MIDI channel for chord roots (channel 8, 0-indexed).
+const rootChannel uint8 = 8
+
+// GenerateSMF produces a Standard MIDI File with metronome (backward compat).
 func GenerateSMF(measures []parser.MeasureResult, bpm float64) ([]byte, Timeline, error) {
+	return GenerateSMFWithOptions(measures, bpm, SMFOptions{Metronome: true, Roots: false})
+}
+
+// GenerateSMFWithOptions produces a Standard MIDI File with configurable tracks.
+func GenerateSMFWithOptions(measures []parser.MeasureResult, bpm float64, opts SMFOptions) ([]byte, Timeline, error) {
 	if bpm <= 0 {
 		return nil, Timeline{}, fmt.Errorf("midi: BPM must be positive, got %f", bpm)
 	}
@@ -107,6 +124,7 @@ func GenerateSMF(measures []parser.MeasureResult, bpm float64) ([]byte, Timeline
 	// Score and metronome events collected with absolute ticks, then sorted later
 	var scoreEvents []timedEvent
 	var metroEvents []timedEvent
+	var rootEvents []timedEvent
 
 	pending := map[voiceKey]int64{}  // (ch,pitch) → tick at which to emit NoteOff
 	voiceTick := map[int]int64{}      // per-voice tick accumulator
@@ -200,18 +218,45 @@ func GenerateSMF(measures []parser.MeasureResult, bpm float64) ([]byte, Timeline
 		}
 
 		// Metronome clicks for this measure
-		for beatIdx := 0; beatIdx < numBeats; beatIdx++ {
-			beatAbsTick := measureStartTick + int64(beatIdx)*beatTicks
-			metroNote := uint8(77)
-			metroVel := uint8(80)
-			if beatIdx == 0 {
-				metroNote = 76
-				metroVel = 100
+		if opts.Metronome {
+			for beatIdx := 0; beatIdx < numBeats; beatIdx++ {
+				// Backbeats mode: skip odd-numbered beats in 0-based indexing
+				// (beats 1, 3, 5... = 2, 4, 6... in 1-based)
+				if opts.Backbeats && beatIdx%2 == 0 {
+					continue
+				}
+				beatAbsTick := measureStartTick + int64(beatIdx)*beatTicks
+				metroNote := uint8(77)
+				metroVel := uint8(80)
+				if !opts.Backbeats && beatIdx == 0 {
+					metroNote = 76
+					metroVel = 100
+				}
+				metroEvents = append(metroEvents,
+					timedEvent{beatAbsTick, []byte{0x90 | metroChannel, metroNote, metroVel}},
+					timedEvent{beatAbsTick, []byte{0x80 | metroChannel, metroNote, 0}},
+				)
 			}
-			metroEvents = append(metroEvents,
-				timedEvent{beatAbsTick, []byte{0x90 | metroChannel, metroNote, metroVel}},
-				timedEvent{beatAbsTick, []byte{0x80 | metroChannel, metroNote, 0}},
-			)
+		}
+
+		// Chord roots for this measure (if enabled and chords present)
+		if opts.Roots && len(m.Chords) > 0 {
+			for beatIdx := 0; beatIdx < numBeats && beatIdx < len(m.Chords); beatIdx++ {
+				raw := m.Chords[beatIdx]
+				letter, acc := theory.ChordRoot(raw)
+				if letter == "" {
+					continue // sustain "-" or rest ";"
+				}
+				midi := chordRootMIDI(letter, acc)
+				beatAbsTick := measureStartTick + int64(beatIdx)*beatTicks
+				rootEvents = append(rootEvents,
+					timedEvent{beatAbsTick, []byte{0x90 | rootChannel, uint8(midi), 90}},
+				)
+				// NoteOff at beat end
+				rootEvents = append(rootEvents,
+					timedEvent{beatAbsTick + beatTicks, []byte{0x80 | rootChannel, uint8(midi), 0}},
+				)
+			}
 		}
 	}
 
@@ -222,10 +267,7 @@ func GenerateSMF(measures []parser.MeasureResult, bpm float64) ([]byte, Timeline
 
 	// Build tracks from sorted events
 	scoreTrack := buildTrackFromEvents(scoreEvents)
-	metroTrack := buildTrackFromEvents(metroEvents)
-
 	scoreTrack.Close(0)
-	metroTrack.Close(0)
 	tempoTrack.Close(uint32(globalTick))
 
 	// Assemble SMF
@@ -237,8 +279,21 @@ func GenerateSMF(measures []parser.MeasureResult, bpm float64) ([]byte, Timeline
 	if err := sf.Add(scoreTrack); err != nil {
 		return nil, Timeline{}, fmt.Errorf("midi: add score track: %w", err)
 	}
-	if err := sf.Add(metroTrack); err != nil {
-		return nil, Timeline{}, fmt.Errorf("midi: add metronome track: %w", err)
+	if opts.Metronome {
+		metroTrack := buildTrackFromEvents(metroEvents)
+		metroTrack.Close(0)
+		if err := sf.Add(metroTrack); err != nil {
+			return nil, Timeline{}, fmt.Errorf("midi: add metronome track: %w", err)
+		}
+	}
+	if opts.Roots && len(rootEvents) > 0 {
+		// Program Change: Fingered Electric Bass (0-indexed program 33)
+		rootEvents = append(rootEvents, timedEvent{0, []byte{0xC0 | rootChannel, 33}})
+		rootTrack := buildTrackFromEvents(rootEvents)
+		rootTrack.Close(0)
+		if err := sf.Add(rootTrack); err != nil {
+			return nil, Timeline{}, fmt.Errorf("midi: add root track: %w", err)
+		}
 	}
 
 	data, err := sf.Bytes()
@@ -253,6 +308,18 @@ func GenerateSMF(measures []parser.MeasureResult, bpm float64) ([]byte, Timeline
 	}
 
 	return data, tl, nil
+}
+
+// chordRootMIDI maps a chord root letter+accidental to a MIDI note in bass range (E1-E2).
+// Uses m4bon's octave convention where octave 5 = C4 (MIDI 60).
+func chordRootMIDI(letter string, accidental int) int {
+	// Start at octave 2 (C2 = MIDI 24, B2 = MIDI 35)
+	midi := 2*12 + theory.NoteOffsets[strings.ToLower(letter)] + accidental
+	// Shift to octave 3 if below E1 (MIDI 28)
+	if midi < 28 {
+		midi += 12
+	}
+	return midi
 }
 
 // GenerateMetronomeOnly produces an SMF with only metronome clicks.

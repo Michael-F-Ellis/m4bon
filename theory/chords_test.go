@@ -109,6 +109,32 @@ func TestNormalizeChordSymbol(t *testing.T) {
 	}
 }
 
+func TestChordRoot(t *testing.T) {
+	tests := []struct {
+		raw    string
+		letter string
+		acc    int
+	}{
+		{"C", "C", 0},
+		{"Dm", "D", 0},
+		{"E7", "E", 0},
+		{"F#m", "F", 1},
+		{"G&", "G", -1},
+		{"A&7", "A", -1},
+		{"B&maj7", "B", -1},
+		{"C#dim", "C", 1},
+		{"-", "", 0},
+		{";", "", 0},
+	}
+	for _, tc := range tests {
+		letter, acc := ChordRoot(tc.raw)
+		if letter != tc.letter || acc != tc.acc {
+			t.Errorf("ChordRoot(%q) = (%q, %d), want (%q, %d)",
+				tc.raw, letter, acc, tc.letter, tc.acc)
+		}
+	}
+}
+
 func TestValidateChordSymbol(t *testing.T) {
 	tests := []struct {
 		raw    string

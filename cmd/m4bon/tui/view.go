@@ -157,6 +157,18 @@ func (m *model) topBar() string {
 	// Volume
 	parts = append(parts, fmt.Sprintf("vol:%.0f%%", m.volume*100))
 
+	if m.metronomeOn {
+		parts = append(parts, "click:on")
+	} else {
+		parts = append(parts, "click:off")
+	}
+	if m.rootsOn {
+		parts = append(parts, "roots:on")
+	}
+	if m.backbeatsOn {
+		parts = append(parts, "backbeats")
+	}
+
 	bar := strings.Join(parts, "  │  ")
 
 	// Truncate to fit width
@@ -229,7 +241,11 @@ func (m *model) statusBar() string {
 	case m.isRecording:
 		transport = "● REC"
 	case m.isPlaying:
-		transport = "▶ Playing"
+		if m.transport.Active() == "recording" {
+			transport = "▶ Review"
+		} else {
+			transport = "▶ Playing"
+		}
 	default:
 		transport = "■ Stopped"
 	}
@@ -261,6 +277,10 @@ func (m *model) helpView() string {
 
   space    Play / Pause
   s        Stop
+  r        Start / stop recording
+  m        Toggle metronome
+  b        Toggle backbeats (click on 2 and 4)
+  R        Toggle chord roots
   [ / ]    Tempo -5 / +5 BPM
   { / }    Tempo -1 / +1 BPM
   0        Reset tempo to 120

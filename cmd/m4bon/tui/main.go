@@ -20,7 +20,7 @@ func Run(dslText, label string, bpm float64, asciiLeaps bool) error {
 		emptyMeasures := []parser.MeasureResult{
 			{TimeNum: 4, TimeDen: 4, Events: nil, NumGroups: 0, GroupSlots: nil},
 		}
-		smfBytes, tl, err := midi.GenerateSMF(emptyMeasures, bpm)
+		smfBytes, tl, err := midi.GenerateSMFWithOptions(emptyMeasures, bpm, midi.SMFOptions{Metronome: true})
 		if err != nil {
 			return fmt.Errorf("generate SMF: %w", err)
 		}
@@ -47,7 +47,7 @@ func Run(dslText, label string, bpm float64, asciiLeaps bool) error {
 	}
 
 	// Generate SMF
-	smfBytes, tl, err := midi.GenerateSMF(result.Measures, bpm)
+	smfBytes, tl, err := midi.GenerateSMFWithOptions(result.Measures, bpm, midi.SMFOptions{Metronome: true})
 	if err != nil {
 		return fmt.Errorf("generate SMF: %w", err)
 	}

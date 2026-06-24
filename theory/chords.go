@@ -264,6 +264,17 @@ func normalizePitchChars(raw string) string {
 	return raw
 }
 
+// ChordRoot extracts the root letter and accidental from a chord symbol.
+// Returns empty string for sustain "-" and rest ";" markers.
+// letter is uppercase (C, D, E, F, G, A, B).
+// accidental is 1 for sharp, -1 for flat, 0 for natural.
+func ChordRoot(raw string) (letter string, accidental int) {
+	if raw == "-" || raw == ";" {
+		return "", 0
+	}
+	return normalizeRoot(raw)
+}
+
 // ValidateChordSymbol checks whether a raw chord token is syntactically valid.
 // Returns "" if valid, or a descriptive error message.
 func ValidateChordSymbol(raw string) string {
