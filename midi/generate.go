@@ -1,7 +1,5 @@
 // Package midi converts parsed m4bon measures into Standard MIDI File bytes
-// and a timeline of measure start times. macOS-only via build constraint.
-//
-//go:build darwin && cgo
+// and a timeline of measure start times.
 package midi
 
 import (
@@ -405,4 +403,200 @@ func GenerateMetronomeOnly(measures []parser.MeasureResult, bpm float64) ([]byte
 	}
 
 	return data, tl, nil
+}
+
+// MidiEvent is a single MIDI event with absolute tick position, for JSON export.
+type MidiEvent struct {
+	Tick     int64   `json:"tick"`
+	Type     string  `json:"type"`    // "noteOn", "noteOff", "metaTempo", "metaMeter"
+	Channel  int     `json:"channel"` // 0-based MIDI channel
+	Pitch    int     `json:"pitch"`   // MIDI note number
+	Velocity int     `json:"velocity"` // note velocity (0–127); 0 on noteOff
+	BPM      float64 `json:"bpm,omitempty"`
+	Num      int     `json:"num,omitempty"`
+	Den      int     `json:"den,omitempty"`
+}
+
+// EventListResult is the JSON-serializable result of GenerateEventList.
+type EventListResult struct {
+	Events        []MidiEvent `json:"events"`
+	MeasureStarts []float64   `json:"measureStarts"` // in seconds
+	TotalDuration int64       `json:"totalDuration"` // in ticks
+	TempoBPM      float64     `json:"tempoBPM"`
+}
+
+// GenerateEventList produces a flat MIDI event list suitable for JSON export.
+// Events are sorted by absolute tick. MeasureStarts are in seconds at the given BPM.
+func GenerateEventList(measures []parser.MeasureResult, bpm float64, opts SMFOptions) (EventListResult, error) {
+	if bpm <= 0 {
+		return EventListResult{}, fmt.Errorf("midi: BPM must be positive, got %f", bpm)
+	}
+	if len(measures) == 0 {
+		return EventListResult{}, fmt.Errorf("midi: no measures to generate")
+	}
+
+	var events []MidiEvent
+	pending := map[voiceKey]int64{}
+	voiceTick := map[int]int64{}
+
+	measureStarts := make([]float64, len(measures))
+	var globalTick int64
+
+	for mi, m := range measures {
+		tickToSec := 60.0 / (float64(DPPQ) * bpm)
+		measureStarts[mi] = float64(globalTick) * tickToSec
+
+		// Tempo meta event
+		events = append(events, MidiEvent{Tick: globalTick, Type: "metaTempo", BPM: bpm})
+
+		// Time signature meta event
+		if mi == 0 || m.TimeNum != measures[mi-1].TimeNum || m.TimeDen != measures[mi-1].TimeDen {
+			events = append(events, MidiEvent{
+				Tick: globalTick, Type: "metaMeter",
+				Num: m.TimeNum, Den: m.TimeDen,
+			})
+		}
+
+		beat := parser.ResolveBeatDuration(m.TimeNum, m.TimeDen)
+		beatTicks := int64(DPPQ * 4 * beat.Num / beat.Den)
+		numBeats := m.TimeNum
+		if m.TimeNum%3 == 0 {
+			numBeats = m.TimeNum / 3
+		}
+
+		measureStartTick := globalTick
+
+		for _, ev := range m.Events {
+			if ev.Type == parser.EventTupletStart {
+				continue
+			}
+
+			durTicks := int64(DPPQ * 4 * ev.Duration.Num / ev.Duration.Den)
+			voice := ev.Voice
+
+			if ev.Split {
+				voiceTick[voice] += durTicks
+				ch := voiceToChannel(voice)
+				for _, p := range extractPitches(ev) {
+					key := voiceKey{ch, uint8(p)}
+					if pt, ok := pending[key]; ok {
+						pending[key] = pt + durTicks
+					}
+				}
+				if voiceTick[voice] > globalTick {
+					globalTick = voiceTick[voice]
+				}
+				continue
+			}
+
+			if ev.Type == parser.EventRest {
+				voiceTick[voice] += durTicks
+				if voiceTick[voice] > globalTick {
+					globalTick = voiceTick[voice]
+				}
+				continue
+			}
+
+			if ev.Type == parser.EventNote || ev.Type == parser.EventChord {
+				ch := voiceToChannel(voice)
+				atTick := voiceTick[voice]
+				pitches := extractPitches(ev)
+
+				for _, p := range pitches {
+					key := voiceKey{ch, uint8(p)}
+					if pt, ok := pending[key]; ok && pt <= atTick {
+						offTick := pt
+						if offTick == atTick && offTick > 0 {
+							offTick--
+						}
+						events = append(events, MidiEvent{
+							Tick:    offTick,
+							Type:    "noteOff",
+							Channel: int(ch),
+							Pitch:   int(p),
+						})
+						delete(pending, key)
+					}
+				}
+
+				for _, p := range pitches {
+					key := voiceKey{ch, uint8(p)}
+					if _, ok := pending[key]; ok {
+						continue
+					}
+					events = append(events, MidiEvent{
+						Tick:     atTick,
+						Type:     "noteOn",
+						Channel:  int(ch),
+						Pitch:    int(p),
+						Velocity: 90,
+					})
+					pending[key] = atTick + durTicks
+				}
+
+				voiceTick[voice] += durTicks
+				if voiceTick[voice] > globalTick {
+					globalTick = voiceTick[voice]
+				}
+			}
+		}
+
+		// Metronome clicks
+		if opts.Metronome {
+			for beatIdx := 0; beatIdx < numBeats; beatIdx++ {
+				if opts.Backbeats && beatIdx%2 == 0 {
+					continue
+				}
+				beatAbsTick := measureStartTick + int64(beatIdx)*beatTicks
+				metroNote := 77
+				metroVel := 80
+				if !opts.Backbeats && beatIdx == 0 {
+					metroNote = 76
+					metroVel = 100
+				}
+				events = append(events,
+					MidiEvent{Tick: beatAbsTick, Type: "noteOn", Channel: 9, Pitch: metroNote, Velocity: metroVel},
+					MidiEvent{Tick: beatAbsTick, Type: "noteOff", Channel: 9, Pitch: metroNote},
+				)
+			}
+		}
+
+		// Chord roots
+		if opts.Roots && len(m.Chords) > 0 {
+			for beatIdx := 0; beatIdx < numBeats && beatIdx < len(m.Chords); beatIdx++ {
+				raw := m.Chords[beatIdx]
+				letter, acc := theory.ChordRoot(raw)
+				if letter == "" {
+					continue
+				}
+				midiVal := chordRootMIDI(letter, acc)
+				beatAbsTick := measureStartTick + int64(beatIdx)*beatTicks
+				events = append(events,
+					MidiEvent{Tick: beatAbsTick, Type: "noteOn", Channel: 8, Pitch: int(midiVal), Velocity: 90},
+					MidiEvent{Tick: beatAbsTick + beatTicks, Type: "noteOff", Channel: 8, Pitch: int(midiVal)},
+				)
+			}
+		}
+	}
+
+	// Emit remaining pending NoteOffs
+	for key, pt := range pending {
+		events = append(events, MidiEvent{
+			Tick:    pt,
+			Type:    "noteOff",
+			Channel: int(key.channel),
+			Pitch:   int(key.pitch),
+		})
+	}
+
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].Tick < events[j].Tick
+	})
+
+	return EventListResult{
+		Events:        events,
+		MeasureStarts: measureStarts,
+		TotalDuration: globalTick,
+		TempoBPM:      bpm,
+	}, nil
 }

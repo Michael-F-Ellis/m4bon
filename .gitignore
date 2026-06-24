@@ -66,3 +66,6 @@ compile_commands.json
 
 # User-placed artifacts for assistant inspection
 /tmp/
+
+# WASM build artifact
+/web/m4bon.wasm

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>m4bon</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🎵</text></svg>">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div id="app">
+    <div id="top-bar">
+      <span id="time-sig">M4/4</span>
+      <span id="key-sig">K0 (C major)</span>
+      <span id="tempo">♩=120</span>
+    </div>
+
+    <div id="dsl-area">
+      <textarea id="dsl-input" placeholder="Type m4bon DSL here..." spellcheck="false"></textarea>
+    </div>
+
+    <div id="measures">
+      <div class="placeholder">Enter DSL above to see rendered output</div>
+    </div>
+
+    <div id="transport">
+      <div class="transport-group">
+        <button id="btn-play" title="Play/Pause (Space)">▶</button>
+        <button id="btn-stop" title="Stop (S)">■</button>
+        <button id="btn-record" title="Record (R)">⏺</button>
+      </div>
+      <div class="transport-group">
+        <label>Tempo</label>
+        <button id="btn-tempo-down">−5</button>
+        <span id="tempo-display">120</span>
+        <button id="btn-tempo-up">+5</button>
+        <button id="btn-tempo-down1">−1</button>
+        <button id="btn-tempo-up1">+1</button>
+        <button id="btn-tempo-reset">120</button>
+      </div>
+      <div class="transport-group">
+        <label>Volume</label>
+        <input type="range" id="volume-slider" min="0" max="127" value="90">
+      </div>
+      <div class="transport-group">
+        <label>Measures</label>
+        <button id="btn-start-up">▲</button>
+        <span id="range-display">All</span>
+        <button id="btn-start-down">▼</button>
+        <button id="btn-end-up">▲</button>
+        <button id="btn-end-down">▼</button>
+      </div>
+      <div class="transport-group">
+        <label>
+          <input type="checkbox" id="chk-metronome" checked> Metro
+        </label>
+        <label>
+          <input type="checkbox" id="chk-subscripts" checked> Subs
+        </label>
+        <label>
+          <input type="checkbox" id="chk-roots"> Roots
+        </label>
+        <label>
+          <input type="checkbox" id="chk-backbeats"> Backbeats
+        </label>
+      </div>
+      <div class="transport-group">
+        <button id="btn-load">Load .dsl</button>
+        <button id="btn-save-mxl">Save .mxl</button>
+        <button id="btn-save-dsl">Save .dsl</button>
+        <button id="btn-copy">Copy DSL</button>
+      </div>
+    </div>
+
+    <div id="status-bar">
+      <span id="status-text">Ready</span>
+      <span id="status-error" class="hidden"></span>
+    </div>
+  </div>
+
+  <script src="wasm_exec.js"></script>
+  <script src="WebAudioFontPlayer.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
