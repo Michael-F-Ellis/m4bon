@@ -57,6 +57,14 @@ class M4bonApp {
     this._bassSamples = null;
     this.mediaRecorder = null;
     this.audioChunks = [];
+    this.recordingBlob = null;
+    this.recordingURL = null;
+    this.recordingAudio = null;
+    this._recHighlightTimer = null;
+    this._lastRecPlayingIdx = -1;
+    this._recHighlightStarts = null;
+    this._recordMeasureSecs = null;
+    this._recordCountInSec = 0;
     this.playbackTimer = null;
     this.measureHighlightTimer = null;
     this.debounceTimer = null;
@@ -92,6 +100,7 @@ class M4bonApp {
     document.getElementById('btn-play').addEventListener('click', () => this.togglePlay());
     document.getElementById('btn-stop').addEventListener('click', () => this.stop());
     document.getElementById('btn-record').addEventListener('click', () => this.toggleRecord());
+    document.getElementById('btn-play-recording').addEventListener('click', () => this.playRecording());
 
     document.getElementById('btn-tempo-down').addEventListener('click', () => this.adjustTempo(-5));
     document.getElementById('btn-tempo-up').addEventListener('click', () => this.adjustTempo(5));
@@ -550,7 +559,19 @@ class M4bonApp {
       }
 
       const tickToSec = 60.0 / (480.0 * tempoBPM);
-      const startWall = this.audioCtx ? this.audioCtx.currentTime + 0.05 : performance.now() / 1000;
+      let startWall = this.audioCtx ? this.audioCtx.currentTime + 0.05 : performance.now() / 1000;
+
+      // Count-in: one measure of metronome clicks when starting from measure 1
+      let countInSec = 0;
+      if (this.startMeasure === 0) {
+        const beats = this.parsedData.timeNum;
+        const beatSec = 60.0 / tempoBPM;
+        for (let b = 0; b < beats; b++) {
+          this._scheduleClick(startWall + b * beatSec, b === 0);
+        }
+        countInSec = beats * beatSec;
+        startWall += countInSec;
+      }
 
       // Pre-scan: collect note-on events. Use an array per key because
       // the same pitch on the same channel can appear in overlapping notes.
@@ -601,7 +622,13 @@ class M4bonApp {
       this._playStartTick = startTick;
       this._startHighlightTimer();
 
-      const totalSec = (endTick === Infinity ? lastTick : endTick - startTick) * tickToSec + 0.5;
+      // Save timing for recording playback highlight
+      if (this.isRecording) {
+        this._recordMeasureSecs = measureStarts.map(s => s - rangeOffset);
+        this._recordCountInSec = countInSec;
+      }
+
+      const totalSec = (endTick === Infinity ? lastTick : endTick - startTick) * tickToSec + 0.5 + countInSec;
       this.playbackTimer = setTimeout(() => this.onPlaybackEnd(), totalSec * 1000);
     } catch (e) {
       this.showError('Playback error: ' + e.message);
@@ -714,6 +741,7 @@ class M4bonApp {
   }
 
   stop() {
+    if (this.isRecording) this.stopRecording();
     if (this.isPlaying) {
       if (this.playbackTimer) {
         clearTimeout(this.playbackTimer);
@@ -753,6 +781,9 @@ class M4bonApp {
     this.isPlaying = false;
     this._clearHighlightTimer();
     document.getElementById('btn-play').textContent = '▶';
+    if (this.isRecording) {
+      this.stopRecording();
+    }
   }
 
   _startHighlightTimer() {
@@ -778,6 +809,19 @@ class M4bonApp {
       });
     }
     this._lastPlayingIdx = -1;
+  }
+
+  _scheduleClick(time, isDownbeat) {
+    if (!this.audioCtx) return;
+    const osc = this.audioCtx.createOscillator();
+    const gain = this.audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(this.masterGain || this.audioCtx.destination);
+    osc.frequency.value = isDownbeat ? 1200 : 900;
+    gain.gain.setValueAtTime(0.08, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.04);
+    osc.start(time);
+    osc.stop(time + 0.04);
   }
 
   _updatePlayHighlight() {
@@ -826,12 +870,25 @@ class M4bonApp {
       this.stopRecording();
       return;
     }
+    // Discard prior recording
+    if (this.recordingURL) {
+      URL.revokeObjectURL(this.recordingURL);
+      this.recordingURL = null;
+      this.recordingBlob = null;
+    }
+    document.getElementById('btn-play-recording').classList.add('hidden');
     await this.startRecording();
   }
 
   async startRecording() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        }
+      });
       this.mediaRecorder = new MediaRecorder(stream);
       this.audioChunks = [];
 
@@ -842,29 +899,100 @@ class M4bonApp {
       this.isRecording = true;
       document.getElementById('btn-record').classList.add('recording');
       this.statusText.textContent = 'Recording...';
+
+      // Start MIDI playback in sync
+      await this.play();
     } catch (e) {
       this.showError('Microphone access denied');
     }
   }
 
   stopRecording() {
-    if (this.mediaRecorder && this.isRecording) {
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       this.mediaRecorder.stop();
       this.mediaRecorder.stream.getTracks().forEach(t => t.stop());
-      this.isRecording = false;
-      document.getElementById('btn-record').classList.remove('recording');
     }
+    this.isRecording = false;
+    document.getElementById('btn-record').classList.remove('recording');
   }
 
   processRecording() {
     const blob = new Blob(this.audioChunks, { type: 'audio/webm' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'm4bon-recording.webm';
-    a.click();
-    URL.revokeObjectURL(url);
-    this.statusText.textContent = 'Recording saved';
+    this.recordingBlob = blob;
+    if (this.recordingURL) URL.revokeObjectURL(this.recordingURL);
+    this.recordingURL = URL.createObjectURL(blob);
+    document.getElementById('btn-play-recording').classList.remove('hidden');
+    this.statusText.textContent = 'Recording ready';
+  }
+
+  playRecording() {
+    if (!this.recordingURL) return;
+    if (this.recordingAudio && !this.recordingAudio.ended) {
+      this.recordingAudio.pause();
+      this.recordingAudio.currentTime = 0;
+      this.recordingAudio = null;
+      this._clearRecordingHighlight();
+      return;
+    }
+    const a = new Audio(this.recordingURL);
+    a.onended = () => {
+      this.recordingAudio = null;
+      this._clearRecordingHighlight();
+    };
+    this.recordingAudio = a;
+
+    if (this._recordMeasureSecs && this._recordMeasureSecs.length > 0) {
+      this._recHighlightStarts = this._recordMeasureSecs.map(
+        s => s + (this._recordCountInSec || 0)
+      );
+      this._startRecordingHighlight();
+    }
+
+    a.play().catch(e => this.showError('Playback failed'));
+  }
+
+  _startRecordingHighlight() {
+    this._clearRecordingHighlight();
+    const self = this;
+    const tick = () => {
+      if (!self.recordingAudio || self.recordingAudio.ended) {
+        self._clearRecordingHighlight();
+        return;
+      }
+      self._updateRecordingHighlight(self.recordingAudio.currentTime);
+      self._recHighlightTimer = requestAnimationFrame(tick);
+    };
+    this._recHighlightTimer = requestAnimationFrame(tick);
+  }
+
+  _clearRecordingHighlight() {
+    if (this._recHighlightTimer) {
+      cancelAnimationFrame(this._recHighlightTimer);
+      this._recHighlightTimer = null;
+    }
+    this._lastRecPlayingIdx = -1;
+    if (this.measuresEl) {
+      this.measuresEl.querySelectorAll('.m4bon-measure.m4bon-playing').forEach(d => {
+        d.classList.remove('m4bon-playing');
+      });
+    }
+  }
+
+  _updateRecordingHighlight(elapsed) {
+    const starts = this._recHighlightStarts;
+    if (!starts) return;
+    let idx = 0;
+    while (idx < starts.length && starts[idx] <= elapsed) idx++;
+    const divs = this.measuresEl.querySelectorAll('.m4bon-measure');
+    if (idx !== this._lastRecPlayingIdx) {
+      if (this._lastRecPlayingIdx >= 0 && this._lastRecPlayingIdx < divs.length) {
+        divs[this._lastRecPlayingIdx].classList.remove('m4bon-playing');
+      }
+      if (idx > 0 && idx <= divs.length) {
+        divs[idx - 1].classList.add('m4bon-playing');
+        this._lastRecPlayingIdx = idx - 1;
+      }
+    }
   }
 
   // --- Tempo ---
