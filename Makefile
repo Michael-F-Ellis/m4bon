@@ -42,9 +42,9 @@ notify:
 	@if [ -f ./notify.sh ]; then ./notify.sh "$(MSG)"; fi
 
 # Build the WebAssembly binary for the web TUI.
-# Requires tinygo (https://tinygo.org).
+# Uses Go's built-in js/wasm target — no external toolchain needed.
 wasm:
-	tinygo build -o web/m4bon.wasm -target wasm -no-debug ./wasm/
+	GOOS=js GOARCH=wasm $(GO) build -o web/m4bon.wasm ./wasm/
 
 # Deploy the web TUI to the gh-pages branch for GitHub Pages.
 # After running, push with: git push origin gh-pages
