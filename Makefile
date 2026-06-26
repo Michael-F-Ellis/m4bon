@@ -16,7 +16,7 @@
 BINARY := m4bon
 GO := go
 
-.PHONY: all build test check clean golden notify
+.PHONY: all build test check clean golden notify wasm gh-pages
 
 all: build test
 
@@ -40,3 +40,14 @@ golden:
 # Notify after a long task completes. Usage: make notify MSG="done"
 notify:
 	@if [ -f ./notify.sh ]; then ./notify.sh "$(MSG)"; fi
+
+# Build the WebAssembly binary for the web TUI.
+# Requires tinygo (https://tinygo.org).
+wasm:
+	tinygo build -o web/m4bon.wasm -target wasm -no-debug ./wasm/
+
+# Deploy the web TUI to the gh-pages branch for GitHub Pages.
+# After running, push with: git push origin gh-pages
+# Then enable GitHub Pages in repo Settings → Pages → Source: "Deploy from branch" → gh-pages.
+gh-pages: wasm
+	@./scripts/deploy-gh-pages.sh
