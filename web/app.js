@@ -824,6 +824,28 @@ class M4bonApp {
     osc.stop(time + 0.04);
   }
 
+  _scrollToMeasure(idx) {
+    const divs = this.measuresEl.querySelectorAll('.m4bon-measure');
+    if (idx < 0 || idx >= divs.length) return;
+
+    const container = this.measuresEl;
+    const measure = divs[idx];
+    const containerRect = container.getBoundingClientRect();
+    const measureRect = measure.getBoundingClientRect();
+
+    const measureBottom = measureRect.bottom - containerRect.top;
+    const containerHeight = containerRect.height;
+    const measureHeight = measureRect.height;
+
+    // When the playing measure is within 2 measure-heights of the
+    // container bottom, scroll it to the top so the musician can see ahead.
+    if (containerHeight - measureBottom < 2 * measureHeight) {
+      measure.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      measure.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+
   _updatePlayHighlight() {
     if (!this._playMeasureStarts || !this._playStartTime) return;
 
@@ -856,8 +878,7 @@ class M4bonApp {
       divs.forEach(d => d.classList.remove('m4bon-playing'));
       if (idx >= 0 && idx < divs.length) {
         divs[idx].classList.add('m4bon-playing');
-        // Scroll into view
-        divs[idx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        this._scrollToMeasure(idx);
       }
       this._lastPlayingIdx = idx;
     }
@@ -991,6 +1012,7 @@ class M4bonApp {
       if (idx > 0 && idx <= divs.length) {
         divs[idx - 1].classList.add('m4bon-playing');
         this._lastRecPlayingIdx = idx - 1;
+        this._scrollToMeasure(idx - 1);
       }
     }
   }
