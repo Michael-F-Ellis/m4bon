@@ -65,6 +65,7 @@ class M4bonApp {
     this._recHighlightStarts = null;
     this._recordMeasureSecs = null;
     this._recordCountInSec = 0;
+    this._recMimeType = '';
     this.playbackTimer = null;
     this.measureHighlightTimer = null;
     this.debounceTimer = null;
@@ -395,6 +396,13 @@ class M4bonApp {
 
     try {
       this.audioCtx = new AC();
+
+      // Safari suspends AudioContext by default — resume it now while
+      // we're still within the user-gesture call chain.
+      if (this.audioCtx.state === 'suspended') {
+        await this.audioCtx.resume();
+      }
+
       this.wafPlayer = new WebAudioFontPlayer();
 
       // Master gain node
@@ -532,6 +540,13 @@ class M4bonApp {
       return;
     }
     if (!await this.initOutput()) return;
+
+    // Safari may re-suspend the AudioContext after initOutput's async
+    // work completes. Resume it again now, while still in the user-gesture
+    // handler chain from the button click.
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      await this.audioCtx.resume();
+    }
 
     try {
       const result = JSON.parse(m4bonGenerateSMF(JSON.stringify({
@@ -910,7 +925,25 @@ class M4bonApp {
           autoGainControl: false
         }
       });
-      this.mediaRecorder = new MediaRecorder(stream);
+
+      // Pick a MIME type that both Chrome and Safari can record and play.
+      // Safari records audio/mp4; Chrome prefers audio/webm but can play mp4 too.
+      const mimeTypes = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4'
+      ];
+      let mimeType = '';
+      for (const mt of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(mt)) {
+          mimeType = mt;
+          break;
+        }
+      }
+      this._recMimeType = mimeType;
+      this.mediaRecorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
       this.audioChunks = [];
 
       this.mediaRecorder.ondataavailable = (e) => this.audioChunks.push(e.data);
@@ -938,7 +971,8 @@ class M4bonApp {
   }
 
   processRecording() {
-    const blob = new Blob(this.audioChunks, { type: 'audio/webm' });
+    const mimeType = this._recMimeType || this.mediaRecorder.mimeType || 'audio/webm';
+    const blob = new Blob(this.audioChunks, { type: mimeType });
     this.recordingBlob = blob;
     if (this.recordingURL) URL.revokeObjectURL(this.recordingURL);
     this.recordingURL = URL.createObjectURL(blob);
