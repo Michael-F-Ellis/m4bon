@@ -83,6 +83,8 @@ class M4bonApp {
     this.chkBackbeats = document.getElementById('chk-backbeats');
 
     this.dslInput.addEventListener('input', () => this.onDSLChange());
+    this.dslInput.addEventListener('keyup', () => this.highlightCursorMeasure());
+    this.dslInput.addEventListener('click', () => this.highlightCursorMeasure());
     this.volumeSlider.addEventListener('input', () => {
       this.velocity = parseInt(this.volumeSlider.value);
     });
@@ -97,10 +99,10 @@ class M4bonApp {
     document.getElementById('btn-tempo-up1').addEventListener('click', () => this.adjustTempo(1));
     document.getElementById('btn-tempo-reset').addEventListener('click', () => this.setTempo(120));
 
-    document.getElementById('btn-start-up').addEventListener('click', () => this.moveStartMeasure(1));
-    document.getElementById('btn-start-down').addEventListener('click', () => this.moveStartMeasure(-1));
-    document.getElementById('btn-end-up').addEventListener('click', () => this.moveEndMeasure(1));
-    document.getElementById('btn-end-down').addEventListener('click', () => this.moveEndMeasure(-1));
+    document.getElementById('btn-start-up').addEventListener('click', () => this.moveStartMeasure(-1));
+    document.getElementById('btn-start-down').addEventListener('click', () => this.moveStartMeasure(1));
+    document.getElementById('btn-end-up').addEventListener('click', () => this.moveEndMeasure(-1));
+    document.getElementById('btn-end-down').addEventListener('click', () => this.moveEndMeasure(1));
 
     this.chkMetronome.addEventListener('change', () => {
       this.metronomeOn = this.chkMetronome.checked;
@@ -125,13 +127,33 @@ class M4bonApp {
     document.getElementById('btn-copy').addEventListener('click', () => this.copyDSL());
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
+    window.addEventListener('resize', () => this.autoResizeTextarea());
+  }
+
+  autoResizeTextarea() {
+    const el = this.dslInput;
+    el.style.height = 'auto';
+    const maxH = window.innerHeight * 0.4;
+    el.style.height = Math.min(el.scrollHeight, maxH) + 'px';
   }
 
   onDSLChange() {
+    this.autoResizeTextarea();
+    this.highlightCursorMeasure();
+
     clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(() => {
       this.dsl = this.dslInput.value;
       this.parseAndRender();
+      if (this.parsedData) {
+        const reformatted = this.reformatColumns(this.dsl);
+        if (reformatted !== this.dslInput.value) {
+          this.dslInput.value = reformatted;
+          this.dsl = reformatted;
+          this.autoResizeTextarea();
+          this.highlightCursorMeasure();
+        }
+      }
       this.saveState();
     }, 150);
   }
@@ -186,6 +208,7 @@ class M4bonApp {
       if (result.ok) {
         this.measuresEl.innerHTML = result.ok;
         this.highlightMeasures();
+        this.highlightCursorMeasure();
       }
     } catch (e) {
       // WASM not ready
@@ -197,19 +220,30 @@ class M4bonApp {
     const total = divs.length;
     if (total === 0) return;
 
-    // Remove all existing indicators
     divs.forEach(d => {
       d.classList.remove('m4bon-start', 'm4bon-end', 'm4bon-playing');
     });
 
-    // Add start indicator
     if (this.startMeasure > 0 && this.startMeasure < total) {
       divs[this.startMeasure].classList.add('m4bon-start');
     }
 
-    // Add end indicator
     if (this.endMeasure > 0 && this.endMeasure <= total) {
       divs[this.endMeasure - 1].classList.add('m4bon-end');
+    }
+  }
+
+  highlightCursorMeasure() {
+    const pos = this.dslInput.selectionStart;
+    const textBefore = this.dslInput.value.substring(0, pos);
+    const measureIdx = (textBefore.match(/\|/g) || []).length;
+
+    const divs = this.measuresEl.querySelectorAll('.m4bon-measure');
+    divs.forEach(d => d.classList.remove('m4bon-cursor'));
+
+    if (measureIdx < divs.length) {
+      divs[measureIdx].classList.add('m4bon-cursor');
+      divs[measureIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }
 
@@ -225,6 +259,88 @@ class M4bonApp {
       const end = this.endMeasure || total;
       this.rangeDisplay.textContent = `${this.startMeasure + 1}–${end}`;
     }
+  }
+
+  // --- Auto-reformat on successful parse ---
+
+  reformatColumns(dsl) {
+    // Extract leading directive tokens (M, K, T, L at start)
+    const tokens = dsl.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim().split(/\s+/);
+    const directives = [];
+    let i = 0;
+    while (i < tokens.length && /^[MKTL]\d/i.test(tokens[i])) {
+      directives.push(tokens[i]);
+      i++;
+    }
+    const rest = tokens.slice(i).join(' ');
+
+    // Split by barline into measure texts
+    const measures = rest.split('|').map(p => p.trim()).filter(p => p);
+    if (measures.length === 0) return dsl;
+
+    // Parse each measure into { notation, chords, lyrics } triples
+    // Following the parser's extractDirectivesTail state machine: L→R,
+    // state 0=notation, 1=chords(seen :H), 2=lyrics(seen :L)
+    const parsed = measures.map(m => {
+      const words = m.split(/\s+/);
+      const parts = { notation: [], chords: [], lyrics: [], hasH: false, hasL: false };
+      let state = 0;
+      for (const w of words) {
+        if (w === ':H' || w === ':h') { state = 1; parts.hasH = true; continue; }
+        if (w === ':L' || w === ':l') { state = 2; parts.hasL = true; continue; }
+        if (state === 1) parts.chords.push(w);
+        else if (state === 2) parts.lyrics.push(w);
+        else parts.notation.push(w);
+      }
+      return parts;
+    });
+
+    const anyH = parsed.some(p => p.hasH);
+    const anyL = parsed.some(p => p.hasL);
+
+    // Compute max widths for each column
+    let maxNotationW = 0, maxChordW = 0, maxLyricW = 0;
+    for (const p of parsed) {
+      const nw = p.notation.join(' ').length;
+      const cw = p.chords.join(' ').length;
+      const lw = p.lyrics.join(' ').length;
+      if (nw > maxNotationW) maxNotationW = nw;
+      if (cw > maxChordW) maxChordW = cw;
+      if (lw > maxLyricW) maxLyricW = lw;
+    }
+
+    // Rebuild each measure line
+    const out = [];
+
+    if (directives.length > 0) {
+      out.push(directives.join(' '));
+    }
+
+    for (let i = 0; i < parsed.length; i++) {
+      const p = parsed[i];
+      let line = '';
+
+      const notStr = p.notation.join(' ');
+      line += notStr.padEnd(maxNotationW);
+
+      if (anyH) {
+        line += ' :H';
+        const chordStr = p.chords.join(' ');
+        line += ' ' + chordStr.padEnd(maxChordW);
+      }
+
+      if (anyL) {
+        line += ' :L';
+        if (p.lyrics.length > 0) {
+          line += ' ' + p.lyrics.join(' ');
+        }
+      }
+
+      line += ' |';
+      out.push(line);
+    }
+
+    return out.join('\n');
   }
 
   render() {
@@ -805,6 +921,14 @@ class M4bonApp {
         this.dslInput.value = reader.result;
         this.dsl = reader.result;
         this.parseAndRender();
+        if (this.parsedData) {
+          const reformatted = this.reformatColumns(this.dsl);
+          if (reformatted !== this.dslInput.value) {
+            this.dslInput.value = reformatted;
+            this.dsl = reformatted;
+          }
+        }
+        this.autoResizeTextarea();
         this.saveState();
       };
       reader.readAsText(file);
@@ -868,6 +992,7 @@ class M4bonApp {
       if (saved) {
         this.dsl = saved;
         this.dslInput.value = saved;
+        this.autoResizeTextarea();
       }
       this.bpm = parseInt(localStorage.getItem('m4bon-bpm')) || 120;
       this.metronomeOn = localStorage.getItem('m4bon-metronome') !== 'false';
@@ -894,8 +1019,8 @@ class M4bonApp {
       case '{': e.preventDefault(); this.adjustTempo(-1); break;
       case '}': e.preventDefault(); this.adjustTempo(1); break;
       case '0': this.setTempo(120); break;
-      case 'ArrowUp': e.shiftKey ? this.moveEndMeasure(1) : this.moveStartMeasure(1); break;
-      case 'ArrowDown': e.shiftKey ? this.moveEndMeasure(-1) : this.moveStartMeasure(-1); break;
+      case 'ArrowUp': e.shiftKey ? this.moveEndMeasure(-1) : this.moveStartMeasure(-1); break;
+      case 'ArrowDown': e.shiftKey ? this.moveEndMeasure(1) : this.moveStartMeasure(1); break;
       case 'ArrowLeft': e.preventDefault(); this.velocity = Math.max(0, this.velocity - 5);
         this.volumeSlider.value = this.velocity; break;
       case 'ArrowRight': e.preventDefault(); this.velocity = Math.min(127, this.velocity + 5);

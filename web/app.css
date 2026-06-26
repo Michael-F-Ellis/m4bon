@@ -67,8 +67,9 @@ body {
   padding: 10px 14px;
   font-family: inherit;
   font-size: 18px;
-  resize: none;
-  height: 60px;
+  min-height: 60px;
+  max-height: 40vh;
+  resize: vertical;
   outline: none;
 }
 
@@ -242,6 +243,13 @@ input[type="checkbox"] {
 .m4bon-measure.m4bon-playing {
   background: rgba(0, 0, 0, 0.3);
   border-radius: 3px;
+}
+
+/* Cursor-linked measure highlight */
+.m4bon-measure.m4bon-cursor {
+  background: rgba(137, 180, 250, 0.12);
+  border-left: 3px solid var(--accent);
+  padding-left: 5px;
 }
 
 .m4bon-measure-num {
