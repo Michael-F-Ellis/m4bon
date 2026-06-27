@@ -509,3 +509,118 @@ func validateEvents(t *testing.T, events []Event) {
 		}
 	}
 }
+
+// --- Comment tests ---
+
+func TestSanitizeWithComments_Basic(t *testing.T) {
+	dsl := "M4/4 c d e f\n! Chopin Etude\ng a b c"
+	lines, comments := SanitizeWithComments(dsl)
+
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %v", len(lines), lines)
+	}
+	c := comments[1]
+	if len(c) != 1 || c[0] != "Chopin Etude" {
+		t.Errorf("comments[1]: got %v", c)
+	}
+}
+
+func TestSanitizeWithComments_MultiLineBlock(t *testing.T) {
+	dsl := "! Top row\n! on two lines\nc d e f"
+	lines, comments := SanitizeWithComments(dsl)
+
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d", len(lines))
+	}
+	c := comments[0]
+	if len(c) != 2 || c[0] != "Top row" || c[1] != "on two lines" {
+		t.Errorf("comments[0]: got %v, want [Top row, on two lines]", c)
+	}
+}
+
+func TestSanitizeWithComments_EmptyCommentBody(t *testing.T) {
+	dsl := "!\nc d e f"
+	lines, comments := SanitizeWithComments(dsl)
+
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d", len(lines))
+	}
+	if len(comments) != 0 {
+		t.Errorf("expected no comments, got %v", comments)
+	}
+}
+
+func TestSanitizeWithComments_HashComments(t *testing.T) {
+	dsl := "# hash comment\nc d e f\n! bang comment\ng a b c"
+	lines, comments := SanitizeWithComments(dsl)
+
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	c := comments[1]
+	if len(c) != 1 || c[0] != "bang comment" {
+		t.Errorf("comments[1]: got %v", c)
+	}
+}
+
+func TestSanitizeWithComments_TrailingBang(t *testing.T) {
+	dsl := "c d e f\n! orphan comment"
+	lines, comments := SanitizeWithComments(dsl)
+
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d", len(lines))
+	}
+	c := comments[1]
+	if len(c) != 1 || c[0] != "orphan comment" {
+		t.Errorf("comments[1]: got %v, want [orphan comment]", c)
+	}
+}
+
+func TestParseDSLWithComments(t *testing.T) {
+	dsl := "! Study notes\nM4/4 c d e f\n! Dynamic contrast\ng a b c"
+	lines, comments := SanitizeWithComments(dsl)
+	r := ParseDSLWithComments(lines, comments)
+
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	if len(r.Measures) != 2 {
+		t.Fatalf("expected 2 measures, got %d", len(r.Measures))
+	}
+	if l := r.Measures[0].CommentLines; len(l) != 1 || l[0] != "Study notes" {
+		t.Errorf("measure 0 CommentLines: got %v", l)
+	}
+	if l := r.Measures[1].CommentLines; len(l) != 1 || l[0] != "Dynamic contrast" {
+		t.Errorf("measure 1 CommentLines: got %v", l)
+	}
+}
+
+func TestParseDSL_NoComments(t *testing.T) {
+	r := ParseDSL([]string{"c d e f", "g a b c"})
+
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	if len(r.Measures) != 2 {
+		t.Fatalf("expected 2 measures, got %d", len(r.Measures))
+	}
+	if l := r.Measures[0].CommentLines; len(l) != 0 {
+		t.Errorf("expected empty CommentLines, got %v", l)
+	}
+}
+
+func TestParseDSL_TrailingComment(t *testing.T) {
+	dsl := "! Before\nc d e f\n! After"
+	lines, comments := SanitizeWithComments(dsl)
+	r := ParseDSLWithComments(lines, comments)
+
+	if r.Err != nil {
+		t.Fatalf("unexpected error: %v", r.Err)
+	}
+	if l := r.Measures[0].CommentLines; len(l) != 1 || l[0] != "Before" {
+		t.Errorf("measure 0 CommentLines: got %v", l)
+	}
+	if l := r.Measures[0].TrailingCommentLines; len(l) != 1 || l[0] != "After" {
+		t.Errorf("measure 0 TrailingCommentLines: got %v", l)
+	}
+}

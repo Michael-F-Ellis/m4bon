@@ -197,6 +197,10 @@ DSL text (newline-separated measures) → sanitize → tokenize (per line)
 ```
 
 Each line of input is one measure. Blank lines are ignored. Comments (`# text`) are stripped.
+Lines starting with `!` are comment blocks preserved in render output
+(dim italic medium green, toggleable via `showComments`),
+but stripped from MusicXML. Consecutive `!` lines form a comment block
+rendered as separate output lines.
 
 ### Output: MusicXML
 

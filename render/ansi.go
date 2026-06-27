@@ -28,6 +28,8 @@ func ansiColor(s StyleClass) string {
 		return "\033[38;2;160;160;160m"
 	case StyleParen:
 		return "\033[38;2;120;120;120m"
+	case StyleComment:
+		return "\033[38;2;80;150;80m\033[2m"
 	default:
 		return ""
 	}
@@ -113,6 +115,12 @@ func FormatANSIRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int, ascii
 			b.WriteByte('\n')
 		}
 
+		// Comment block before measure
+		if len(row.CommentCells) > 0 {
+			writeCellSeq(&b, row.CommentCells, asciiLeaps)
+			b.WriteByte('\n')
+		}
+
 		// Chord column: left-justified, padded to maxChordW
 		if maxChordW > 0 {
 			writeCellSeq(&b, row.ChordCells, asciiLeaps)
@@ -131,6 +139,12 @@ func FormatANSIRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int, ascii
 			// Lyric column: left-justified
 			writeCellSeq(&b, row.LyricCells, asciiLeaps)
 		}
+
+		// Trailing comment block after the measure
+		if len(row.TrailingCommentCells) > 0 {
+			b.WriteByte('\n')
+			writeCellSeq(&b, row.TrailingCommentCells, asciiLeaps)
+		}
 	}
 	b.WriteByte('\n')
 	return b.String()
@@ -141,6 +155,11 @@ func FormatPlainRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int) stri
 	var b strings.Builder
 	for ri, row := range rows {
 		if ri > 0 {
+			b.WriteByte('\n')
+		}
+		// Comment block before measure
+		if len(row.CommentCells) > 0 {
+			plainWriteCells(&b, row.CommentCells)
 			b.WriteByte('\n')
 		}
 		if maxChordW > 0 {

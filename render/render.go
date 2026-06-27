@@ -16,22 +16,32 @@ const TicksPerWholeNote = frac.TicksPerWholeNote
 // Returns one line per measure with ANSI escape codes for colors, in a
 // three-column layout (CHORDS : NOTES : LYRICS) when chord or lyric
 // directives are present.
-func Render(measures []parser.MeasureResult, asciiLeaps bool, showSubscripts bool) string {
-	rows, maxCW, maxNW, maxLW := BuildRows(measures, showSubscripts)
+func Render(measures []parser.MeasureResult, asciiLeaps bool, showSubscripts bool, showComments bool) string {
+	rows, maxCW, maxNW, maxLW := BuildRows(measures, showSubscripts, showComments)
 	return FormatANSIRows(rows, maxCW, maxNW, maxLW, asciiLeaps)
 }
 
 // BuildCells converts measures into the intermediate Cell representation,
 // one CellSeq per measure. The core rendering logic lives here — it is
 // independent of any output format (terminal, HTML, etc.).
-func BuildCells(measures []parser.MeasureResult, showSubscripts bool) []CellSeq {
+func BuildCells(measures []parser.MeasureResult, showSubscripts bool, showComments bool) []CellSeq {
 	result := make([]CellSeq, 0, len(measures))
 	offset := 1
 	if len(measures) > 0 && measures[0].IsPickup {
 		offset = 0
 	}
 	for mi, m := range measures {
-		cells := buildMeasureCells(m, mi+offset, showSubscripts)
+		commentCells, noteCells, trailingCells := buildMeasureCells(m, mi+offset, showSubscripts, showComments)
+		cells := make(CellSeq, 0, len(commentCells)+len(noteCells)+len(trailingCells)+2)
+		cells = append(cells, commentCells...)
+		if len(commentCells) > 0 {
+			cells = append(cells, Cell{Content: "\n", Style: StyleDefault})
+		}
+		cells = append(cells, noteCells...)
+		if len(trailingCells) > 0 {
+			cells = append(cells, Cell{Content: "\n", Style: StyleDefault})
+			cells = append(cells, trailingCells...)
+		}
 		result = append(result, cells)
 	}
 	return result
@@ -43,14 +53,20 @@ type eventGroup struct {
 	events []parser.Event
 }
 
-// buildMeasureCells produces cells for a single measure, including the
-// measure-number prefix.
-func buildMeasureCells(m parser.MeasureResult, measureNum int, showSubscripts bool) CellSeq {
-	var cells CellSeq
+// buildMeasureCells produces cells for a single measure. Returns a
+// separate comment block for any '!' comment preceding this measure.
+func buildMeasureCells(m parser.MeasureResult, measureNum int, showSubscripts bool, showComments bool) (commentCells CellSeq, noteCells CellSeq, trailingCells CellSeq) {
+	if showComments {
+		for _, cl := range m.CommentLines {
+			commentCells = append(commentCells, Cell{Content: "! ", Style: StyleComment, Italic: true})
+			commentCells = append(commentCells, Cell{Content: cl, Style: StyleComment, Italic: true})
+			commentCells = append(commentCells, Cell{Content: "\n", Style: StyleDefault})
+		}
+	}
 
 	// Measure number prefix: "N:  "
 	prefix := fmt.Sprintf("%d:  ", measureNum)
-	cells = append(cells, Cell{Content: prefix, Style: StyleDefault})
+	noteCells = append(noteCells, Cell{Content: prefix, Style: StyleDefault})
 
 	// Build key signature accidental map for this measure
 	keyAcc := theory.FifthsToAccidentalMap(m.Fifths)
@@ -63,7 +79,7 @@ func buildMeasureCells(m parser.MeasureResult, measureNum int, showSubscripts bo
 	firstInMeasure := true
 	for expectedIdx := 0; expectedIdx < m.NumGroups; expectedIdx++ {
 		if expectedIdx > 0 {
-			cells = append(cells, Cell{Content: " ", Style: StyleDefault})
+			noteCells = append(noteCells, Cell{Content: " ", Style: StyleDefault})
 		}
 
 		// Determine slot count for this group (default 1 for safety)
@@ -75,7 +91,7 @@ func buildMeasureCells(m parser.MeasureResult, measureNum int, showSubscripts bo
 		if gi < len(groups) && groups[gi].idx == expectedIdx {
 			// Prepend beat multiplier if > 1
 			if expectedIdx < len(m.GroupMults) && m.GroupMults[expectedIdx] > 1 {
-				cells = append(cells, Cell{Content: fmt.Sprintf("%d", m.GroupMults[expectedIdx]), Style: StyleSustainRest})
+				noteCells = append(noteCells, Cell{Content: fmt.Sprintf("%d", m.GroupMults[expectedIdx]), Style: StyleSustainRest})
 			}
 
 			// Count non-Split events to compute start-of-group sustains
@@ -94,7 +110,7 @@ func buildMeasureCells(m parser.MeasureResult, measureNum int, showSubscripts bo
 			}
 			startSustains := totalSustains - intraGroupSustains
 			for s := 0; s < startSustains; s++ {
-				cells = append(cells, Cell{Content: "-", Style: StyleSustainRest})
+				noteCells = append(noteCells, Cell{Content: "-", Style: StyleSustainRest})
 			}
 
 			// Render events for this beat group, skipping notational ties
@@ -103,26 +119,36 @@ func buildMeasureCells(m parser.MeasureResult, measureNum int, showSubscripts bo
 					continue // notational tie, not a user-visible sustain
 				}
 				eventCells := eventToCells(ev, keyAcc, firstInMeasure, showSubscripts)
-				cells = append(cells, eventCells...)
+				noteCells = append(noteCells, eventCells...)
 				if (ev.Type == parser.EventNote || ev.Type == parser.EventChord) && !ev.Split {
 					firstInMeasure = false
 				}
 				// For events spanning multiple slots (intra-group sustains),
 				// render a "-" for each absorbed slot position.
 				for s := 1; s < ev.NumSlots; s++ {
-					cells = append(cells, Cell{Content: "-", Style: StyleSustainRest})
+					noteCells = append(noteCells, Cell{Content: "-", Style: StyleSustainRest})
 				}
 			}
 			gi++
 		} else {
 			// Pure sustain group (no events produced) — render "-"
-			cells = append(cells, Cell{Content: "-", Style: StyleSustainRest})
+			noteCells = append(noteCells, Cell{Content: "-", Style: StyleSustainRest})
 		}
 	}
 
 	// Newline at end of measure
-	cells = append(cells, Cell{Content: "\n", Style: StyleDefault})
-	return cells
+	noteCells = append(noteCells, Cell{Content: "\n", Style: StyleDefault})
+
+	// Trailing comment after the measure — separate from noteCells
+	if showComments {
+		for _, cl := range m.TrailingCommentLines {
+			trailingCells = append(trailingCells, Cell{Content: "! ", Style: StyleComment, Italic: true})
+			trailingCells = append(trailingCells, Cell{Content: cl, Style: StyleComment, Italic: true})
+			trailingCells = append(trailingCells, Cell{Content: "\n", Style: StyleDefault})
+		}
+	}
+
+	return commentCells, noteCells, trailingCells
 }
 
 // groupEventsByGroupIdx groups consecutive events by their original
@@ -261,7 +287,7 @@ func subscriptDigit(d int) string {
 
 // BuildRows converts measures into a three-column MeasureRow representation
 // and computes the maximum visible widths for each column.
-func BuildRows(measures []parser.MeasureResult, showSubscripts bool) (rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int) {
+func BuildRows(measures []parser.MeasureResult, showSubscripts bool, showComments bool) (rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int) {
 	offset := 1
 	if len(measures) > 0 && measures[0].IsPickup {
 		offset = 0
@@ -284,7 +310,7 @@ func BuildRows(measures []parser.MeasureResult, showSubscripts bool) (rows []Mea
 		if anyChords {
 			row.ChordCells = buildChordCells(m)
 		}
-		row.NoteCells = buildMeasureCells(m, mi+offset, showSubscripts)
+		row.CommentCells, row.NoteCells, row.TrailingCommentCells = buildMeasureCells(m, mi+offset, showSubscripts, showComments)
 		// Strip trailing newline cell for column width computation
 		row.NoteCells = stripTrailingNewline(row.NoteCells)
 		if anyLyrics {
@@ -400,3 +426,5 @@ func visibleLen(cells CellSeq) int {
 	}
 	return n
 }
+
+// stripTrailingNewline is defined in ansi.go

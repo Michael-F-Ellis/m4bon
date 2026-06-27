@@ -193,6 +193,8 @@ input[type="checkbox"] {
 .m4bon-sustain-rest { color: var(--grey); }  /* rgb(160,160,160) */
 .m4bon-paren { color: var(--paren-grey); }   /* rgb(120,120,120) */
 .m4bon-italic { font-style: italic; }
+.m4bon-comment { color: #509650; font-style: italic; font-weight: 300; } /* medium green, dim */
+.m4bon-comment-line { margin-bottom: 0.1em; }
 .m4bon-octave { font-size: 0.8em; }
 
 .m4bon-leap {

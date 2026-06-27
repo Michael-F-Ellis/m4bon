@@ -973,11 +973,27 @@ func measureLevelAccidental(letter string, explicitAcc int, explicitNatural bool
 	return effectiveAccidental(letter, 0, false, keyAcc)
 }
 
+// commentForIndex returns the comment lines for the given measure index
+// from the comments map, or nil if none exist.
+func commentForIndex(comments map[int][]string, idx int) []string {
+	if comments == nil {
+		return nil
+	}
+	return comments[idx]
+}
+
 // ParseDSL parses m4bon DSL text into a sequence of measures.
 // Key signature (K...), meter (M...), and beat duration (B...) directives
 // are parsed from the DSL itself. Defaults: C major, 4/4.
 // Measures are separated by newlines. Each measure can have its own directives.
 func ParseDSL(lines []string) DSLResult {
+	return ParseDSLWithComments(lines, nil)
+}
+
+// ParseDSLWithComments is like ParseDSL but accepts a map of comments
+// keyed by measure index. Each entry is a slice of '!' line comment
+// bodies appearing immediately before that measure.
+func ParseDSLWithComments(lines []string, comments map[int][]string) DSLResult {
 	if len(lines) == 0 {
 		return DSLResult{Err: fmt.Errorf("no input")}
 	}
@@ -1095,12 +1111,20 @@ func ParseDSL(lines []string) DSLResult {
 			Lyrics:     lyricRaw,
 			HasChords:  len(chordRaw) > 0,
 			HasLyrics:  len(lyricRaw) > 0,
+			CommentLines: commentForIndex(comments, mi),
 		})
 
 		lastMeasureHadNote = measureHasNote(events)
 		currentFifths = md.fifths
 		currentTimeNum = effectiveTimeNum
 		currentTimeDen = effectiveTimeDen
+	}
+
+	// Attach trailing comment to the last measure
+	if len(measures) > 0 {
+		if tc, ok := comments[len(lines)]; ok {
+			measures[len(measures)-1].TrailingCommentLines = tc
+		}
 	}
 
 	// Resolve octaves across all measures

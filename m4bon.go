@@ -47,16 +47,22 @@ func Render(dsl string) (string, error) {
 // asciiLeaps uses ANSI escapes (overline/underline) instead of
 // Unicode combining diacritics for leap indicators.
 func RenderOptions(dsl string, asciiLeaps bool) (string, error) {
-	lines := parser.SanitizeDSL(dsl)
+	return RenderEx(dsl, asciiLeaps, true, false)
+}
+
+// RenderEx parses DSL text and returns colorized output with full
+// configuration options.
+func RenderEx(dsl string, asciiLeaps, showSubscripts, showComments bool) (string, error) {
+	lines, comments := parser.SanitizeWithComments(dsl)
 	if len(lines) == 0 {
 		return "", fmt.Errorf("empty DSL after sanitization")
 	}
-	result := parser.ParseDSL(lines)
+	result := parser.ParseDSLWithComments(lines, comments)
 	if result.Err != nil {
 		return "", result.Err
 	}
 	if len(result.Measures) == 0 {
 		return "", fmt.Errorf("no events produced")
 	}
-	return render.Render(result.Measures, asciiLeaps, true), nil
+	return render.Render(result.Measures, asciiLeaps, showSubscripts, showComments), nil
 }

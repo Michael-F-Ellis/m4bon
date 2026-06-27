@@ -15,6 +15,7 @@ const (
 	StyleDoubleFlat                    // green  — rgb(4, 182, 4)
 	StyleSustainRest                   // grey   — rgb(160, 160, 160)
 	StyleParen                         // medium-dark grey — rgb(120, 120, 120)
+	StyleComment                       // medium green — rgb(80, 150, 80)
 )
 
 // LeapDir indicates whether a pitch is involved in a melodic leap.
@@ -41,7 +42,9 @@ type CellSeq []Cell
 // MeasureRow contains the three columns for one measure's display:
 // chord symbols, notation notes, and lyrics.
 type MeasureRow struct {
-	ChordCells CellSeq
-	NoteCells  CellSeq
-	LyricCells CellSeq
+	ChordCells           CellSeq
+	CommentCells         CellSeq // comment block before the measure (from ! lines)
+	NoteCells            CellSeq
+	TrailingCommentCells CellSeq // comment block after the measure (trailing ! lines)
+	LyricCells           CellSeq
 }

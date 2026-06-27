@@ -66,6 +66,7 @@ type model struct {
 	viewportStart  int    // scroll offset for measure lines
 	showHelp       bool
 	showSubscripts bool   // toggled by 'o', default off
+	showComments  bool   // toggled by 'c', default off
 	asciiLeaps     bool   // from CLI flag
 	quitting       bool
 
@@ -79,7 +80,7 @@ type model struct {
 
 func initialModel(dslText, dslLabel string, measures []parser.MeasureResult, smfBytes []byte, tl midi.Timeline, asciiLeaps bool) *model {
 	// Generate ANSI-colored render lines using the same render pipeline as -render
-	ansiOutput := render.Render(measures, asciiLeaps, false) // subscripts off by default
+	ansiOutput := render.Render(measures, asciiLeaps, false, false) // subscripts and comments off by default
 	renderLines := strings.Split(ansiOutput, "\n")
 	// Remove trailing empty line from split
 	if len(renderLines) > 0 && renderLines[len(renderLines)-1] == "" {
@@ -318,7 +319,7 @@ func (m *model) reloadMeasures() string {
 	m.smfBytes = smfBytes
 	m.timeline = tl
 
-	ansiOutput := render.Render(result.Measures, m.asciiLeaps, m.showSubscripts)
+	ansiOutput := render.Render(result.Measures, m.asciiLeaps, m.showSubscripts, m.showComments)
 	renderLines := strings.Split(ansiOutput, "\n")
 	if len(renderLines) > 0 && renderLines[len(renderLines)-1] == "" {
 		renderLines = renderLines[:len(renderLines)-1]

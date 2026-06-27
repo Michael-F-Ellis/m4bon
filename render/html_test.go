@@ -120,7 +120,7 @@ func TestFormatHTML_Empty(t *testing.T) {
 
 func TestFormatHTMLRows_Basic(t *testing.T) {
 	result := parseDSL(t, "M4/4 c d e f")
-	rows, maxCW, maxNW, maxLW := BuildRows(result.Measures, true)
+	rows, maxCW, maxNW, maxLW := BuildRows(result.Measures, true, false)
 	html := FormatHTMLRows(rows, maxCW, maxNW, maxLW, false)
 
 	if !strings.Contains(html, `<span class="m4bon-note-col">`) {
@@ -133,7 +133,7 @@ func TestFormatHTMLRows_Basic(t *testing.T) {
 
 func TestFormatHTMLRows_WithChords(t *testing.T) {
 	result := parseDSL(t, "M4/4 c d e f :H C - G7 -")
-	rows, maxCW, maxNW, maxLW := BuildRows(result.Measures, true)
+	rows, maxCW, maxNW, maxLW := BuildRows(result.Measures, true, false)
 	html := FormatHTMLRows(rows, maxCW, maxNW, maxLW, false)
 
 	if !strings.Contains(html, `<span class="m4bon-chord-col">`) {
@@ -195,7 +195,7 @@ func TestFormatHTML_MeasureNum(t *testing.T) {
 
 func TestFormatHTMLRows_MeasureDiv(t *testing.T) {
 	result := parseDSL(t, "M4/4 c d e f | a b c d")
-	rows, maxCW, maxNW, maxLW := BuildRows(result.Measures, true)
+	rows, maxCW, maxNW, maxLW := BuildRows(result.Measures, true, false)
 	html := FormatHTMLRows(rows, maxCW, maxNW, maxLW, false)
 
 	count := strings.Count(html, `<div class="m4bon-measure">`)

@@ -38,6 +38,7 @@ class M4bonApp {
     this.startMeasure = 0;
     this.endMeasure = 0;
     this.showSubscripts = true;
+    this.showComments = true;
     this.metronomeOn = true;
     this.rootsOn = false;
     this.backbeatsOn = false;
@@ -94,6 +95,7 @@ class M4bonApp {
     this.volumeSlider = document.getElementById('volume-slider');
     this.chkMetronome = document.getElementById('chk-metronome');
     this.chkSubscripts = document.getElementById('chk-subscripts');
+    this.chkComments = document.getElementById('chk-comments');
     this.chkRoots = document.getElementById('chk-roots');
     this.chkBackbeats = document.getElementById('chk-backbeats');
 
@@ -126,6 +128,10 @@ class M4bonApp {
     });
     this.chkSubscripts.addEventListener('change', () => {
       this.showSubscripts = this.chkSubscripts.checked;
+      this.updateMeasures();
+    });
+    this.chkComments.addEventListener('change', () => {
+      this.showComments = this.chkComments.checked;
       this.updateMeasures();
     });
     this.chkRoots.addEventListener('change', () => {
@@ -211,6 +217,7 @@ class M4bonApp {
       const result = JSON.parse(m4bonRenderHTML(JSON.stringify({
         dsl: this.dsl,
         showSubscripts: this.showSubscripts,
+        showComments: this.showComments,
         asciiLeaps: false
       })));
       if (result.ok) {
@@ -276,12 +283,33 @@ class M4bonApp {
   // --- Auto-reformat on successful parse ---
 
   reformatColumns(dsl) {
-    // Split raw DSL into measure lines
-    const rawLines = dsl.split('\n').map(l => l.trim()).filter(l => l);
+    // Split raw DSL into measure lines, preserving comment lines
+    const rawLines = dsl.split('\n').map(l => l.trim());
     if (rawLines.length === 0) return dsl;
 
-    // Extract global directives from the first line (K, M, T, L at start)
-    const firstTokens = rawLines[0].split(/\s+/);
+    // Separate comments from measure lines, tracking their positions.
+    // Each comment line is preserved separately (no concatenation).
+    const commentMap = new Map(); // line index in output → array of comment lines
+    const measureLines = [];
+
+    for (let i = 0; i < rawLines.length; i++) {
+      const l = rawLines[i];
+      if (!l) continue;
+      if (l.startsWith('!')) {
+        const body = l.slice(1).trim();
+        if (body) {
+          if (!commentMap.has(measureLines.length)) {
+            commentMap.set(measureLines.length, []);
+          }
+          commentMap.get(measureLines.length).push(body);
+        }
+        continue;
+      }
+      measureLines.push(l);
+    }
+
+    // Extract global directives from the first measure line (K, M, T, L at start)
+    const firstTokens = measureLines[0].split(/\s+/);
     const directives = [];
     let fi = 0;
     while (fi < firstTokens.length && /^[MKTL]\d/i.test(firstTokens[fi])) {
@@ -289,23 +317,23 @@ class M4bonApp {
       fi++;
     }
 
-    // Lines 0..n-1: first line may continue with notation after directives
-    const measureLines = [];
+    // Build measure line slices: first line may continue with notation after directives
+    let measuresToParse;
     if (fi > 0) {
-      // First line had directives; remainder of first line is first measure
+      measuresToParse = [];
       const rem = firstTokens.slice(fi).join(' ');
-      if (rem) measureLines.push(rem);
-      for (let j = 1; j < rawLines.length; j++) measureLines.push(rawLines[j]);
+      if (rem) measuresToParse.push(rem);
+      for (let j = 1; j < measureLines.length; j++) measuresToParse.push(measureLines[j]);
     } else {
-      for (const l of rawLines) measureLines.push(l);
+      measuresToParse = measureLines.slice();
     }
 
-    if (measureLines.length === 0) return dsl;
+    if (measuresToParse.length === 0) return dsl;
 
     // Parse each measure into { notation, chords, lyrics } triples
     // Following the parser's extractDirectivesTail state machine: L→R,
     // state 0=notation, 1=chords(seen :H), 2=lyrics(seen :L)
-    const parsed = measureLines.map(m => {
+    const parsed = measuresToParse.map(m => {
       const words = m.split(/\s+/);
       const parts = { notation: [], chords: [], lyrics: [], hasH: false, hasL: false };
       let state = 0;
@@ -341,6 +369,13 @@ class M4bonApp {
     }
 
     for (let i = 0; i < parsed.length; i++) {
+      // Reinsert comment lines before this measure if any exist
+      if (commentMap.has(i)) {
+        for (const cl of commentMap.get(i)) {
+          out.push('! ' + cl);
+        }
+      }
+
       const p = parsed[i];
       let line = '';
 
@@ -361,6 +396,13 @@ class M4bonApp {
       }
 
       out.push(line);
+    }
+
+    // Append trailing comment lines after last measure if any exist
+    if (commentMap.has(parsed.length)) {
+      for (const cl of commentMap.get(parsed.length)) {
+        out.push('! ' + cl);
+      }
     }
 
     return out.join('\n');
@@ -1311,6 +1353,7 @@ class M4bonApp {
       localStorage.setItem('m4bon-bpm', this.bpm);
       localStorage.setItem('m4bon-metronome', this.metronomeOn);
       localStorage.setItem('m4bon-subscripts', this.showSubscripts);
+      localStorage.setItem('m4bon-comments', this.showComments);
     } catch (e) { /* localStorage unavailable */ }
   }
 
@@ -1325,10 +1368,12 @@ class M4bonApp {
       this.bpm = parseInt(localStorage.getItem('m4bon-bpm')) || 120;
       this.metronomeOn = localStorage.getItem('m4bon-metronome') !== 'false';
       this.showSubscripts = localStorage.getItem('m4bon-subscripts') !== 'false';
+      this.showComments = localStorage.getItem('m4bon-comments') !== 'false';
     } catch (e) { /* ignore */ }
     this.tempoDisplay.textContent = this.bpm;
     this.chkMetronome.checked = this.metronomeOn;
     this.chkSubscripts.checked = this.showSubscripts;
+    this.chkComments.checked = this.showComments;
   }
 
   // --- Keyboard shortcuts ---
@@ -1363,6 +1408,8 @@ class M4bonApp {
         this.chkMetronome.checked = this.metronomeOn; break;
       case 'o': this.showSubscripts = !this.showSubscripts;
         this.chkSubscripts.checked = this.showSubscripts; this.updateMeasures(); break;
+      case 'c': this.showComments = !this.showComments;
+        this.chkComments.checked = this.showComments; this.updateMeasures(); break;
     }
   }
 }

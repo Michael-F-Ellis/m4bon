@@ -21,6 +21,8 @@ func htmlClass(s StyleClass) string {
 		return "m4bon-sustain-rest"
 	case StyleParen:
 		return "m4bon-paren"
+	case StyleComment:
+		return "m4bon-comment"
 	default:
 		return ""
 	}
@@ -62,6 +64,13 @@ func FormatHTMLRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int, ascii
 	b.WriteString("</div>")
 
 	for _, row := range rows {
+		// Render comment block before measure
+		if len(row.CommentCells) > 0 {
+			b.WriteString(`<div class="m4bon-comment-line">`)
+			writeCommentCells(&b, row.CommentCells, asciiLeaps)
+			b.WriteString("</div>")
+		}
+
 		b.WriteString(`<div class="m4bon-measure">`)
 
 		if maxChordW > 0 {
@@ -94,9 +103,28 @@ func FormatHTMLRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int, ascii
 		}
 
 		b.WriteString("</div>")
+
+		// Render trailing comment block after the measure
+		if len(row.TrailingCommentCells) > 0 {
+			b.WriteString(`<div class="m4bon-comment-line">`)
+			writeCommentCells(&b, row.TrailingCommentCells, asciiLeaps)
+			b.WriteString("</div>")
+		}
 	}
 	b.WriteString("</div>")
 	return b.String()
+}
+
+// writeCommentCells writes comment cells to the builder, converting
+// newline cells to <br> for HTML line breaks.
+func writeCommentCells(b *strings.Builder, cells CellSeq, asciiLeaps bool) {
+	for _, c := range cells {
+		if c.Content == "\n" {
+			b.WriteString("<br>")
+		} else {
+			b.WriteString(cellToHTML(c, asciiLeaps))
+		}
+	}
 }
 
 // cellToHTML converts a single Cell to an HTML snippet.

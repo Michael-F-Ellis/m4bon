@@ -19,7 +19,8 @@ func rawCells(t *testing.T, dsl string) CellSeq {
 	if len(r.Measures) == 0 {
 		t.Fatalf("no measures for %q", dsl)
 	}
-	return buildMeasureCells(r.Measures[0], 1, true)
+	_, nc, _ := buildMeasureCells(r.Measures[0], 1, true, false)
+	return nc
 }
 
 // allMeasuresCells calls BuildCells on parsed DSL for all measures.
@@ -30,7 +31,7 @@ func allMeasuresCells(t *testing.T, dsl string) []CellSeq {
 	if r.Err != nil {
 		t.Fatalf("ParseDSL(%q): %v", dsl, r.Err)
 	}
-	return BuildCells(r.Measures, true)
+	return BuildCells(r.Measures, true, false)
 }
 
 // sanitizeLines splits a DSL string on | for backward compatibility with old test strings
@@ -596,7 +597,7 @@ func TestRenderWithLeaps(t *testing.T) {
 				EffAccidental:  0,
 			},
 		}, NumGroups: 2, GroupSlots: []int{1, 1}},
-	}, false, true)
+	}, false, true, false)
 
 	// ^a → LeapUp → combining circumflex
 	if !strings.Contains(out, combiningCirc) {
@@ -636,7 +637,7 @@ func allRows(t *testing.T, dsl string) ([]MeasureRow, int, int, int) {
 	if r.Err != nil {
 		t.Fatalf("ParseDSL(%q): %v", dsl, r.Err)
 	}
-	return BuildRows(r.Measures, true)
+	return BuildRows(r.Measures, true, false)
 }
 
 func TestRenderChordsOnly(t *testing.T) {
@@ -780,7 +781,7 @@ func TestFormatPlainRowsThreeColumn(t *testing.T) {
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
-	rows, maxCW, maxNW, maxLW := BuildRows(r.Measures, true)
+	rows, maxCW, maxNW, maxLW := BuildRows(r.Measures, true, false)
 	plain := FormatPlainRows(rows, maxCW, maxNW, maxLW)
 	if !strings.Contains(plain, "C") {
 		t.Error("expected chord 'C' in plain output")
@@ -793,5 +794,79 @@ func TestFormatPlainRowsThreeColumn(t *testing.T) {
 	}
 	if !strings.HasSuffix(plain, "\n") {
 		t.Error("expected trailing newline")
+	}
+}
+
+// --- Comment tests ---
+
+func TestRenderCommentBlock(t *testing.T) {
+	m := parser.MeasureResult{
+		Events:       []parser.Event{},
+		TimeNum:      4,
+		TimeDen:      4,
+		NumGroups:    1,
+		GroupSlots:   []int{0},
+		CommentLines: []string{"Top row", "on two lines"},
+	}
+	commentCells, _, _ := buildMeasureCells(m, 1, true, true)
+
+	if len(commentCells) == 0 {
+		t.Fatal("expected comment cells")
+	}
+	// Should have 2 comment lines: "! Top row\n" and "! on two lines\n"
+	// Each line = 3 cells: "! ", text, "\n"
+	if len(commentCells) != 6 {
+		t.Errorf("expected 6 cells for 2 comment lines, got %d", len(commentCells))
+	}
+}
+
+func TestRenderCommentsHidden(t *testing.T) {
+	m := parser.MeasureResult{
+		Events:       []parser.Event{},
+		TimeNum:      4,
+		TimeDen:      4,
+		NumGroups:    1,
+		GroupSlots:   []int{0},
+		CommentLines: []string{"Should not appear"},
+	}
+	commentCells, _, _ := buildMeasureCells(m, 1, true, false)
+	if len(commentCells) != 0 {
+		t.Errorf("expected no comment cells, got %d", len(commentCells))
+	}
+}
+
+func TestRenderTrailingComment(t *testing.T) {
+	m := parser.MeasureResult{
+		Events:               []parser.Event{},
+		TimeNum:              4,
+		TimeDen:              4,
+		NumGroups:            1,
+		GroupSlots:           []int{0},
+		TrailingCommentLines: []string{"After"},
+	}
+	_, _, trailingCells := buildMeasureCells(m, 1, true, true)
+
+	// Trailing comment should be in trailingCells (3rd return value)
+	found := false
+	for _, c := range trailingCells {
+		if c.Style == StyleComment && c.Content == "After" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("trailing comment not found in noteCells")
+	}
+}
+
+func TestStyleCommentANSIColor(t *testing.T) {
+	color := ansiColor(StyleComment)
+	if color == "" {
+		t.Error("expected ANSI color for StyleComment")
+	}
+	if !strings.Contains(color, "80") || !strings.Contains(color, "150") || !strings.Contains(color, "80") {
+		t.Errorf("expected medium green rgb(80,150,80), got %q", color)
+	}
+	if !strings.Contains(color, "\033[2m") {
+		t.Error("expected dim escape for StyleComment")
 	}
 }

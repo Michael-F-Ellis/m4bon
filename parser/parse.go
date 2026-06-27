@@ -211,6 +211,13 @@ type MeasureResult struct {
 	Lyrics    []string // one entry per active-note attack; nil/empty if no :L directive
 	HasChords bool
 	HasLyrics bool
+
+	// CommentLines are '!' line comments appearing immediately before this measure.
+	// Each entry is one '!' line; consecutive lines form a block rendered as
+	// separate output lines.
+	CommentLines []string
+	// TrailingCommentLines are '!' line comments following the last measure.
+	TrailingCommentLines []string
 }
 
 // BeatDuration codes for B directive.
@@ -274,20 +281,52 @@ func countActivePositions(slots []Slot) int {
 // SanitizeDSL strips comments and trims whitespace from DSL text.
 // A comment is a line whose first non-whitespace character is '#' followed
 // by whitespace (or just '#' alone). Bare '#c' is NOT treated as a comment.
+// '!' comments (lines starting with '!' as first non-whitespace character)
+// are also stripped.
 func SanitizeDSL(text string) []string {
-	var lines []string
+	lines, _ := SanitizeWithComments(text)
+	return lines
+}
+
+// SanitizeWithComments strips comments from DSL text and returns the
+// cleaned lines along with a map from measure index to the comment lines
+// that appeared immediately before that measure. '!' at the start of a
+// line (as first non-whitespace character) begins a line comment — any
+// printable content after '!' is the comment body. Consecutive '!' lines
+// form a comment block with one entry per line. '#' comments are silently
+// discarded (not tracked).
+func SanitizeWithComments(text string) (lines []string, comments map[int][]string) {
+	comments = make(map[int][]string)
+	var pending []string
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
-		// Check if line is a comment: "#" or "# text" (not "#c", "#&b", etc.)
+		// Check if line is a '#' comment: "#" or "# text" (not "#c", "#&b", etc.)
 		if strings.HasPrefix(trimmed, "#") && (len(trimmed) == 1 || trimmed[1] == ' ') {
 			continue
 		}
+		// Check if line is a '!' comment
+		if strings.HasPrefix(trimmed, "!") {
+			body := strings.TrimSpace(trimmed[1:])
+			if body != "" {
+				pending = append(pending, body)
+			}
+			continue
+		}
+		// Regular DSL line
+		if len(pending) > 0 {
+			comments[len(lines)] = pending
+			pending = nil
+		}
 		lines = append(lines, trimmed)
 	}
-	return lines
+	// Trailing comment block: store at len(lines) to indicate it follows the last measure
+	if len(pending) > 0 && len(lines) > 0 {
+		comments[len(lines)] = pending
+	}
+	return
 }
 
 func normalizePitchInput(text string) string {

@@ -142,6 +142,9 @@ func (m *model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		return m.handleSubscriptsToggle()
 
+	case "c":
+		return m.handleCommentsToggle()
+
 	case "u":
 		return m.handleReload()
 
@@ -289,7 +292,18 @@ func (m *model) handleSeekMeasure(delta int) (tea.Model, tea.Cmd) {
 func (m *model) handleSubscriptsToggle() (tea.Model, tea.Cmd) {
 	m.showSubscripts = !m.showSubscripts
 	// Re-render with current subscript setting
-	ansiOutput := render.Render(m.measures, m.asciiLeaps, m.showSubscripts)
+	ansiOutput := render.Render(m.measures, m.asciiLeaps, m.showSubscripts, m.showComments)
+	renderLines := strings.Split(ansiOutput, "\n")
+	if len(renderLines) > 0 && renderLines[len(renderLines)-1] == "" {
+		renderLines = renderLines[:len(renderLines)-1]
+	}
+	m.renderLines = renderLines
+	return m, nil
+}
+
+func (m *model) handleCommentsToggle() (tea.Model, tea.Cmd) {
+	m.showComments = !m.showComments
+	ansiOutput := render.Render(m.measures, m.asciiLeaps, m.showSubscripts, m.showComments)
 	renderLines := strings.Split(ansiOutput, "\n")
 	if len(renderLines) > 0 && renderLines[len(renderLines)-1] == "" {
 		renderLines = renderLines[:len(renderLines)-1]

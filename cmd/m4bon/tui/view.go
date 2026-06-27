@@ -289,6 +289,7 @@ func (m *model) helpView() string {
   ← / →    Volume down / up
   j / k    Scroll down / up
   o        Toggle octave subscripts
+  c        Toggle ! comments display
   u        Reload from source
   q        Quit
   ?        Toggle this help

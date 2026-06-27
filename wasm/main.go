@@ -21,6 +21,7 @@ type parseReq struct {
 type renderHTMLReq struct {
 	DSL            string `json:"dsl"`
 	ShowSubscripts bool   `json:"showSubscripts"`
+	ShowComments   bool   `json:"showComments"`
 	AsciiLeaps     bool   `json:"asciiLeaps"`
 }
 
@@ -207,17 +208,17 @@ func renderHTMLWrapper(this js.Value, args []js.Value) interface{} {
 		return errMsg("m4bonRenderHTML: invalid JSON: " + err.Error())
 	}
 
-	lines := parser.SanitizeDSL(req.DSL)
+	lines, comments := parser.SanitizeWithComments(req.DSL)
 	if len(lines) == 0 {
 		return errMsg("m4bonRenderHTML: empty DSL after sanitization")
 	}
 
-	result := parser.ParseDSL(lines)
+	result := parser.ParseDSLWithComments(lines, comments)
 	if result.Err != nil {
 		return errMsg("m4bonRenderHTML: " + result.Err.Error())
 	}
 
-	rows, maxCW, maxNW, maxLW := render.BuildRows(result.Measures, req.ShowSubscripts)
+	rows, maxCW, maxNW, maxLW := render.BuildRows(result.Measures, req.ShowSubscripts, req.ShowComments)
 	html := render.FormatHTMLRows(rows, maxCW, maxNW, maxLW, req.AsciiLeaps)
 	return ok(html)
 }

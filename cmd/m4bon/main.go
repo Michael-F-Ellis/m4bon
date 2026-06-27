@@ -103,7 +103,7 @@ func main() {
 	}
 
 	if *renderFlag {
-		out := render.Render(result.Measures, *asciiLeaps, true)
+		out := render.Render(result.Measures, *asciiLeaps, true, false)
 		if *outputFile != "" {
 			if err := os.WriteFile(*outputFile, []byte(out), 0644); err != nil {
 				fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", *outputFile, err)
