@@ -239,20 +239,34 @@ func GenerateSMFWithOptions(measures []parser.MeasureResult, bpm float64, opts S
 
 		// Chord roots for this measure (if enabled and chords present)
 		if opts.Roots && len(m.Chords) > 0 {
+			// Track sustain chains: chord roots sustain through "-" tokens.
+			// Rests ";" produce silence and break the sustain chain.
 			for beatIdx := 0; beatIdx < numBeats && beatIdx < len(m.Chords); beatIdx++ {
 				raw := m.Chords[beatIdx]
 				letter, acc := theory.ChordRoot(raw)
 				if letter == "" {
 					continue // sustain "-" or rest ";"
 				}
+
+				// Count consecutive sustain "-" tokens after this chord.
+				// Stop at next letter, rest ";", end of chords, or end of measure.
+				sustainBeats := 1
+				for s := beatIdx + 1; s < numBeats && s < len(m.Chords); s++ {
+					nextRaw := m.Chords[s]
+					if nextRaw == "-" {
+						sustainBeats++
+					} else {
+						break
+					}
+				}
+
 				midi := chordRootMIDI(letter, acc)
 				beatAbsTick := measureStartTick + int64(beatIdx)*beatTicks
 				rootEvents = append(rootEvents,
 					timedEvent{beatAbsTick, []byte{0x90 | rootChannel, uint8(midi), 90}},
 				)
-				// NoteOff at beat end
 				rootEvents = append(rootEvents,
-					timedEvent{beatAbsTick + beatTicks, []byte{0x80 | rootChannel, uint8(midi), 0}},
+					timedEvent{beatAbsTick + int64(sustainBeats)*beatTicks, []byte{0x80 | rootChannel, uint8(midi), 0}},
 				)
 			}
 		}
@@ -567,13 +581,24 @@ func GenerateEventList(measures []parser.MeasureResult, bpm float64, opts SMFOpt
 				raw := m.Chords[beatIdx]
 				letter, acc := theory.ChordRoot(raw)
 				if letter == "" {
-					continue
+					continue // sustain "-" or rest ";"
 				}
+
+				// Count consecutive sustain "-" tokens after this chord.
+				sustainBeats := 1
+				for s := beatIdx + 1; s < numBeats && s < len(m.Chords); s++ {
+					if m.Chords[s] == "-" {
+						sustainBeats++
+					} else {
+						break
+					}
+				}
+
 				midiVal := chordRootMIDI(letter, acc)
 				beatAbsTick := measureStartTick + int64(beatIdx)*beatTicks
 				events = append(events,
 					MidiEvent{Tick: beatAbsTick, Type: "noteOn", Channel: 8, Pitch: int(midiVal), Velocity: 90},
-					MidiEvent{Tick: beatAbsTick + beatTicks, Type: "noteOff", Channel: 8, Pitch: int(midiVal)},
+					MidiEvent{Tick: beatAbsTick + int64(sustainBeats)*beatTicks, Type: "noteOff", Channel: 8, Pitch: int(midiVal)},
 				)
 			}
 		}

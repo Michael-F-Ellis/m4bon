@@ -69,6 +69,12 @@ class M4bonApp {
     this.playbackTimer = null;
     this.measureHighlightTimer = null;
     this.debounceTimer = null;
+    this._scheduledNotes = null;
+    this._schedulerIdx = 0;
+    this._schedulerTimer = null;
+    this._playbackEndTime = 0;
+    this._keepAliveOsc = null;
+    this._keepAliveGain = null;
 
     this.initDOM();
     this.loadState();
@@ -236,12 +242,16 @@ class M4bonApp {
   }
 
   highlightCursorMeasure() {
+    const divs = this.measuresEl.querySelectorAll('.m4bon-measure');
+    divs.forEach(d => d.classList.remove('m4bon-cursor'));
+
+    // Suppress cursor highlight during playback or recording to avoid
+    // conflicting with the moving measure-position highlight.
+    if (this.isPlaying || this.isRecording) return;
+
     const pos = this.dslInput.selectionStart;
     const textBefore = this.dslInput.value.substring(0, pos);
     const measureIdx = (textBefore.match(/\n/g) || []).length;
-
-    const divs = this.measuresEl.querySelectorAll('.m4bon-measure');
-    divs.forEach(d => d.classList.remove('m4bon-cursor'));
 
     if (measureIdx < divs.length) {
       divs[measureIdx].classList.add('m4bon-cursor');
@@ -605,16 +615,14 @@ class M4bonApp {
         startWall += countInSec;
       }
 
-      // Pre-scan: collect note-on events. Use an array per key because
-      // the same pitch on the same channel can appear in overlapping notes.
+      // Pre-scan: collect note-on/note-off pairs into a flat schedule array.
+      // Each entry has absolute wall-clock start/duration for direct scheduling.
+      const scheduledNotes = [];
       const pendingNotes = {}; // key: "ch-pitch" -> [{ tick, velocity }]
-      let lastTick = 0;
 
       for (const ev of events) {
         if (ev.tick < startTick || ev.tick >= endTick) continue;
         if (ev.type === 'metaTempo' || ev.type === 'metaMeter') continue;
-
-        if (ev.tick > lastTick) lastTick = ev.tick;
 
         if (ev.type === 'noteOn') {
           const key = ev.channel + '-' + ev.pitch;
@@ -624,27 +632,42 @@ class M4bonApp {
           const key = ev.channel + '-' + ev.pitch;
           if (pendingNotes[key] && pendingNotes[key].length > 0) {
             const onset = pendingNotes[key].shift();
-            const startTime = startWall + (onset.tick - startTick) * tickToSec;
             let duration = (ev.tick - onset.tick) * tickToSec;
-            // Minimum duration so metronome clicks are audible
             if (duration <= 0) duration = 0.05;
-            this.scheduleNote(ev.channel, ev.pitch, onset.velocity, startTime, duration);
+            scheduledNotes.push({
+              channel: ev.channel,
+              pitch: ev.pitch,
+              velocity: onset.velocity,
+              startTime: startWall + (onset.tick - startTick) * tickToSec,
+              duration: duration
+            });
           }
         }
       }
 
-      // Flush any remaining pending notes with 1s default duration
+      // Flush remaining pending notes
       for (const key in pendingNotes) {
         const list = pendingNotes[key];
         const [ch, pitch] = key.split('-').map(Number);
         for (const onset of list) {
-          const startTime = startWall + (onset.tick - startTick) * tickToSec;
-          this.scheduleNote(ch, pitch, onset.velocity, startTime, 1.0);
+          scheduledNotes.push({
+            channel: ch,
+            pitch: pitch,
+            velocity: onset.velocity,
+            startTime: startWall + (onset.tick - startTick) * tickToSec,
+            duration: 1.0
+          });
         }
       }
 
+      // Sort by startTime (should already be sorted, but ensure it)
+      scheduledNotes.sort((a, b) => a.startTime - b.startTime);
+
       this.isPlaying = true;
       document.getElementById('btn-play').textContent = '⏸';
+
+      // Clear cursor highlight so it doesn't conflict with play-position highlight
+      this.highlightCursorMeasure();
 
       // Start measure highlight tracking
       const rangeOffset = measureStarts[this.startMeasure] || 0;
@@ -660,8 +683,49 @@ class M4bonApp {
         this._recordCountInSec = countInSec;
       }
 
-      const totalSec = (endTick === Infinity ? lastTick : endTick - startTick) * tickToSec + 0.5 + countInSec;
-      this.playbackTimer = setTimeout(() => this.onPlaybackEnd(), totalSec * 1000);
+      if (this.isRecording) {
+        // Recording path: schedule all notes synchronously. MediaRecorder
+        // keeps the AudioContext alive, so we don't need the keep-alive
+        // oscillator. Front-loading all node creation avoids audio glitches
+        // from incremental queueWaveTable calls during capture.
+        for (const n of scheduledNotes) {
+          this.scheduleNote(n.channel, n.pitch, n.velocity, n.startTime, n.duration);
+        }
+
+        // Set a safety timeout as fallback
+        const lastNoteEnd = scheduledNotes.length > 0
+          ? scheduledNotes[scheduledNotes.length - 1].startTime + scheduledNotes[scheduledNotes.length - 1].duration
+          : startWall;
+        const safetySec = (lastNoteEnd - startWall) + 2.0 + countInSec;
+        this.playbackTimer = setTimeout(() => this.onPlaybackEnd(), safetySec * 1000);
+      } else {
+        // Playback-only path: use look-ahead scheduler to adapt to clock
+        // drift. Notes are scheduled incrementally in ~200ms windows.
+        this._scheduledNotes = scheduledNotes;
+        this._schedulerIdx = 0;
+        this._schedulerTimer = null;
+
+        this._scheduleLookAhead();
+
+        // Set a safety timeout as fallback (scheduler handles normal completion)
+        const lastNoteEnd = scheduledNotes.length > 0
+          ? scheduledNotes[scheduledNotes.length - 1].startTime + scheduledNotes[scheduledNotes.length - 1].duration
+          : startWall;
+        const safetySec = (lastNoteEnd - startWall) + 2.0 + countInSec;
+        this.playbackTimer = setTimeout(() => this.onPlaybackEnd(), safetySec * 1000);
+
+        // Keep-alive oscillator prevents Safari from auto-suspending the
+        // AudioContext when notes are scheduled via setTimeout callbacks
+        // rather than directly from the user-gesture handler.
+        if (this.audioCtx) {
+          this._keepAliveOsc = this.audioCtx.createOscillator();
+          this._keepAliveGain = this.audioCtx.createGain();
+          this._keepAliveGain.gain.value = 0;
+          this._keepAliveOsc.connect(this._keepAliveGain);
+          this._keepAliveGain.connect(this.audioCtx.destination);
+          this._keepAliveOsc.start();
+        }
+      }
     } catch (e) {
       this.showError('Playback error: ' + e.message);
       this.isPlaying = false;
@@ -779,6 +843,12 @@ class M4bonApp {
         clearTimeout(this.playbackTimer);
         this.playbackTimer = null;
       }
+      if (this._schedulerTimer) {
+        clearTimeout(this._schedulerTimer);
+        this._schedulerTimer = null;
+      }
+      this._scheduledNotes = null;
+      this._schedulerIdx = 0;
       this._clearHighlightTimer();
       if (this.midiOutput) {
         for (let ch = 0; ch < 16; ch++) {
@@ -804,15 +874,31 @@ class M4bonApp {
         }
         this._bassNodes = [];
       }
+      // Stop keep-alive oscillator
+      if (this._keepAliveOsc) {
+        try { this._keepAliveOsc.stop(); } catch (e) {}
+        try { this._keepAliveOsc.disconnect(); } catch (e) {}
+        this._keepAliveOsc = null;
+        this._keepAliveGain = null;
+      }
       this.isPlaying = false;
       document.getElementById('btn-play').textContent = '▶';
+      this.highlightCursorMeasure();
     }
   }
 
   onPlaybackEnd() {
+    // Stop keep-alive oscillator
+    if (this._keepAliveOsc) {
+      try { this._keepAliveOsc.stop(); } catch (e) {}
+      try { this._keepAliveOsc.disconnect(); } catch (e) {}
+      this._keepAliveOsc = null;
+      this._keepAliveGain = null;
+    }
     this.isPlaying = false;
     this._clearHighlightTimer();
     document.getElementById('btn-play').textContent = '▶';
+    this.highlightCursorMeasure();
     if (this.isRecording) {
       this.stopRecording();
     }
@@ -841,6 +927,47 @@ class M4bonApp {
       });
     }
     this._lastPlayingIdx = -1;
+  }
+
+  _scheduleLookAhead() {
+    if (!this.isPlaying) return;
+    if (!this.audioCtx) return;
+
+    const SCHEDULER_INTERVAL_MS = 50;
+    const LOOK_AHEAD_SEC = 0.200;
+
+    const now = this.audioCtx.currentTime;
+    const windowEnd = now + LOOK_AHEAD_SEC;
+    const notes = this._scheduledNotes;
+    const len = notes.length;
+
+    let scheduled = false;
+    while (this._schedulerIdx < len) {
+      const n = notes[this._schedulerIdx];
+      if (n.startTime < windowEnd) {
+        this.scheduleNote(n.channel, n.pitch, n.velocity, n.startTime, n.duration);
+        this._schedulerIdx++;
+        scheduled = true;
+      } else {
+        break;
+      }
+    }
+
+    if (!scheduled && this._schedulerIdx < len) {
+      const n = notes[this._schedulerIdx];
+      const start = Math.max(n.startTime, now + 0.01);
+      this.scheduleNote(n.channel, n.pitch, n.velocity, start, n.duration);
+      this._schedulerIdx++;
+    }
+
+    if (this._schedulerIdx >= len) {
+      const lastNote = notes[len - 1];
+      const tail = (lastNote.startTime + lastNote.duration) - now + 0.5;
+      this.playbackTimer = setTimeout(() => this.onPlaybackEnd(), Math.max(tail * 1000, 500));
+      return;
+    }
+
+    this._schedulerTimer = setTimeout(() => this._scheduleLookAhead(), SCHEDULER_INTERVAL_MS);
   }
 
   _scheduleClick(time, isDownbeat) {

@@ -52,3 +52,21 @@ go build -o m4bon .        # 0.5s — standalone binary
 ## License
 
 MIT
+
+## Web TUI
+
+A browser-based interface is available at `web/index.html`. Serve it locally:
+
+```bash
+make serve   # serves on http://localhost:8087
+```
+
+**Chrome is the recommended browser.** Safari's Web Audio implementation
+has known issues with audio timing during `MediaRecorder` capture — recording
+produces timing glitches that cannot be reliably worked around without a
+complete architectural rewrite (e.g., `OfflineAudioContext` + separate
+playback, which defeats the purpose of live monitoring). 
+
+Non-recording playback in Safari works correctly thanks to a look-ahead
+scheduler and keep-alive oscillator
+([plan](plans/look-ahead-web-audio-scheduler.md)).

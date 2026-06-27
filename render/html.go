@@ -127,13 +127,11 @@ func cellToHTML(c Cell, asciiLeaps bool) string {
 	}
 
 	var leapClass string
-	if asciiLeaps {
-		switch c.Leap {
-		case LeapUp:
-			leapClass = "m4bon-leap-up"
-		case LeapDown:
-			leapClass = "m4bon-leap-down"
-		}
+	switch c.Leap {
+	case LeapUp:
+		leapClass = "m4bon-leap m4bon-leap-up"
+	case LeapDown:
+		leapClass = "m4bon-leap m4bon-leap-down"
 	}
 
 	content := baseContent + unicodeLeap + subscript

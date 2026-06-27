@@ -365,6 +365,7 @@ When `-render` is set, each measure is output as one line:
 
 ## Known Limitations
 
+- **Safari Web Audio is unreliable for recording.** Safari's `AudioContext` + `MediaRecorder` combination produces timing glitches during live recording capture. The look-ahead scheduler ([plan](plans/look-ahead-web-audio-scheduler.md)) fixes non-recording playback in Safari but cannot overcome low-level contention between audio node scheduling and `MediaRecorder` capture. **Chrome is the recommended browser for the web TUI.**
 - Single staff (piano), maximum 4 voices per chord
 - No nested chords inside voice-poly groups
 - Voice-poly tuplet combinations not yet supported

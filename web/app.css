@@ -195,9 +195,12 @@ input[type="checkbox"] {
 .m4bon-italic { font-style: italic; }
 .m4bon-octave { font-size: 0.8em; }
 
+.m4bon-leap {
+  font-weight: bold;
+  font-style: italic;
+}
+
 .m4bon-leap-up {
-  text-decoration: overline;
-  text-decoration-color: var(--accent);
 }
 
 .m4bon-leap-down {

@@ -1,7 +1,7 @@
 # Look-Ahead Scheduler for Web Audio Playback — Implementation Plan
 
 **Date:** 2026-06-26
-**Status:** Draft
+**Status:** Done (partial — see Outcome)
 
 ## Objective
 
@@ -251,3 +251,36 @@ this._schedulerIdx = 0;
 
 - The `queueWaveTable` envelopes tracked in `activeEnvelopes` use a key `channel-pitch-startTime`. With the scheduler, `startTime` might be slightly adjusted by the force-schedule fallback. The key will be different, but this is fine — stop cancellation iterates all keys.
 - The force-schedule fallback (`max(n.startTime, now + 0.01)`) could theoretically cause slight timing shifts if Safari's clock is severely out of sync. In practice, 10ms is below human perception threshold for musical timing.
+
+## Outcome (2026-06-27)
+
+**Implemented as a two-path approach:**
+
+**Playback-only path:** Look-ahead scheduler polls `audioCtx.currentTime` every
+50ms, schedules notes within a 200ms window, with force-schedule fallback and
+safety timeout. A keep-alive oscillator (silent, gain=0) prevents Safari from
+auto-suspending the AudioContext during `setTimeout`-based scheduling.
+
+**Recording path:** Falls back to the original "schedule all at once" approach.
+`MediaRecorder` keeps the AudioContext alive, and front-loading all node
+creation avoids glitches from incremental `queueWaveTable` calls competing with
+capture.
+
+**Safari recording remains unreliable** despite the split-path architecture.
+Multiple attempted fixes (keep-alive oscillator, synchronous scheduling during
+recording, larger scheduling windows) did not resolve timing glitches during
+Safari recording. Root cause is believed to be low-level contention between
+`AudioContext` node scheduling and `MediaRecorder` capture in Safari's audio
+pipeline. The README and AGENTS.md now recommend Chrome as the preferred browser
+for the web TUI.
+
+**Additional improvements from this plan's implementation session:**
+- Cursor position highlight in rendered measures suppressed during
+  playback/recording to avoid conflicting with the moving play-position
+  highlight
+- Leap notes (with `^`/`/` octave shift) rendered bold + italic in web app via
+  new `m4bon-leap` CSS class
+- Chord root sustain via `:H` directive fixed — roots now honor sustain chains
+  (`C - G7 -` sustains C for 2 beats, G7 for 2 beats instead of all roots
+  cutting off after 1 beat). The `GenerateEventList` code path (web/WASM) was
+  the second chord root generator that needed the fix.
