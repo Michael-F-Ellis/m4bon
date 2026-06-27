@@ -44,21 +44,28 @@ func TestNoteTypeForDuration(t *testing.T) {
 func TestSanitizeDSL(t *testing.T) {
 	cases := []struct {
 		input string
-		want  string
+		want  []string
 	}{
-		{"c d e f", "c d e f"},
-		{"# comment\nc d\ne f", "c d e f"},        // comment lines stripped
-		{"#\nc d e f", "c d e f"},                  // bare # comment
-		{"#c d e f", "#c d e f"},                   // #c is NOT a comment (pitch)
-		{"#&b c d e f", "#&b c d e f"},             // #&b is NOT a comment
-		{"", ""},                                    // empty stays empty
-		{"   ", ""},                                 // whitespace-only → empty
-		{"c d e f\n\n\ng a b c", "c d e f g a b c"}, // blank lines stripped
+		{"c d e f", []string{"c d e f"}},
+		{"# comment\nc d\ne f", []string{"c d", "e f"}},
+		{"#\nc d e f", []string{"c d e f"}},
+		{"#c d e f", []string{"#c d e f"}},
+		{"#&b c d e f", []string{"#&b c d e f"}},
+		{"", nil},
+		{"   ", nil},
+		{"c d e f\n\n\ng a b c", []string{"c d e f", "g a b c"}},
 	}
 	for _, tc := range cases {
 		got := parser.SanitizeDSL(tc.input)
-		if got != tc.want {
-			t.Errorf("SanitizeDSL(%q) = %q, want %q", tc.input, got, tc.want)
+		if len(got) != len(tc.want) {
+			t.Errorf("SanitizeDSL(%q) = %v, want %v", tc.input, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("SanitizeDSL(%q) = %v, want %v", tc.input, got, tc.want)
+				break
+			}
 		}
 	}
 }
@@ -512,7 +519,7 @@ func TestGenerateChangesTimeSigInSecondMeasure(t *testing.T) {
 // --- Roundtrip sanity tests ---
 
 func TestRoundtripBasicNotes(t *testing.T) {
-	result := parser.ParseDSL("c d e f")
+	result := parser.ParseDSL([]string{"c d e f"})
 	if result.Err != nil {
 		t.Fatalf("ParseDSL failed: %v", result.Err)
 	}

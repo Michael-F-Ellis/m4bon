@@ -5,6 +5,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mellis/m4bon/midi"
@@ -34,7 +35,7 @@ func Run(dslText, label string, bpm float64, asciiLeaps bool) error {
 
 	// Sanitize and parse DSL
 	sanitized := parser.SanitizeDSL(dslText)
-	if sanitized == "" {
+	if len(sanitized) == 0 {
 		return fmt.Errorf("empty DSL after sanitization")
 	}
 
@@ -52,8 +53,11 @@ func Run(dslText, label string, bpm float64, asciiLeaps bool) error {
 		return fmt.Errorf("generate SMF: %w", err)
 	}
 
+	// Join lines for display
+	dslDisplay := strings.Join(sanitized, "\n")
+
 	// Create model and load MIDI player
-	m := initialModel(sanitized, label, result.Measures, smfBytes, tl, asciiLeaps)
+	m := initialModel(dslDisplay, label, result.Measures, smfBytes, tl, asciiLeaps)
 
 	// Load MIDI player in background
 	if err := m.loadMIDIPlayer(); err != nil {

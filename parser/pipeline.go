@@ -2,7 +2,6 @@ package parser
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/mellis/m4bon/frac"
@@ -528,53 +527,6 @@ var keySigMap = map[string]int{
 	"f": -1, "b&": -2, "e&": -3, "a&": -4, "d&": -5, "g&": -6, "c&": -7,
 }
 
-// stripDirectives extracts K (key) and M (meter) directives
-// from the start of the DSL string, returning the stripped DSL and parsed metadata.
-// Returns whether an M directive was found at the global level.
-func stripDirectives(text string) (stripped string, fifths int, timeNum, timeDen int, hasMeter bool) {
-	fifths = 0   // default: C major
-	timeNum = 4  // default: 4/4
-	timeDen = 4
-
-	re := regexp.MustCompile(`^([kK]\S+\s*)?([mM]\S+\s*)?`)
-	m := re.FindStringSubmatch(text)
-	if m == nil {
-		return text, fifths, timeNum, timeDen, false
-	}
-
-	directives := ""
-	for i := 1; i < len(m); i++ {
-		directives += strings.TrimSpace(m[i]) + " "
-	}
-	directives = strings.TrimSpace(directives)
-
-	if directives != "" {
-		// Parse K directive
-		for _, part := range strings.Fields(directives) {
-			if (strings.HasPrefix(part, "K") || strings.HasPrefix(part, "k")) && len(part) > 1 {
-				body := strings.ToLower(part[1:])
-				// Map to key signature
-				// Try exact match first, then try various orderings
-				canon := canonicalKey(body)
-				if f, ok := keySigMap[canon]; ok {
-					fifths = f
-				}
-			}
-			if (strings.HasPrefix(part, "M") || strings.HasPrefix(part, "m")) && len(part) > 1 {
-				body := part[1:]
-				if n, err := fmt.Sscanf(body, "%d/%d", &timeNum, &timeDen); err == nil && n == 2 {
-					hasMeter = true
-				}
-			}
-		}
-
-		// Remove directives from text
-		text = strings.TrimSpace(re.ReplaceAllString(text, ""))
-	}
-
-	return text, fifths, timeNum, timeDen, hasMeter
-}
-
 // canonicalKey normalizes a key signature body (e.g. "e&", "&e", "eb", "&e")
 // to its canonical form for lookup in keySigMap.
 func canonicalKey(body string) string {
@@ -721,29 +673,6 @@ type measureDirectives struct {
 
 // splitMeasures splits tokens at | boundaries into measure groups.
 // Returns the groups and whether any barline was found.
-func splitMeasures(tokens []Token) (groups [][]Token, hasBarline bool) {
-	var curGroup []Token
-	for _, tok := range tokens {
-		if tok.Raw == "|" {
-			hasBarline = true
-			if len(curGroup) > 0 {
-				groups = append(groups, curGroup)
-				curGroup = nil
-			}
-			continue
-		}
-		curGroup = append(curGroup, tok)
-	}
-	if len(curGroup) > 0 {
-		groups = append(groups, curGroup)
-	}
-	// If no | separators, treat everything as one measure
-	if len(groups) == 0 {
-		groups = [][]Token{tokens}
-	}
-	return
-}
-
 // scanMeasureDirectives scans tokens for K, M, B directives and returns
 // the parsed directives along with the remaining beat tokens.
 func scanMeasureDirectives(tokens []Token, defaultFifths, defaultTimeNum, defaultTimeDen int) measureDirectives {
@@ -1047,28 +976,37 @@ func measureLevelAccidental(letter string, explicitAcc int, explicitNatural bool
 // ParseDSL parses m4bon DSL text into a sequence of measures.
 // Key signature (K...), meter (M...), and beat duration (B...) directives
 // are parsed from the DSL itself. Defaults: C major, 4/4.
-// Measures are separated by |. Each measure can have its own directives.
-func ParseDSL(text string) DSLResult {
-	text, fifths, timeNum, timeDen, hasInitialMeter := stripDirectives(text)
-	tokens := tokenize(text)
-	if len(tokens) == 0 {
+// Measures are separated by newlines. Each measure can have its own directives.
+func ParseDSL(lines []string) DSLResult {
+	if len(lines) == 0 {
 		return DSLResult{Err: fmt.Errorf("no input")}
 	}
 
-	measureTokenGroups, hasBarline := splitMeasures(tokens)
+	hasMultipleLines := len(lines) > 1
 
-	currentFifths := fifths
-	currentTimeNum := timeNum
-	currentTimeDen := timeDen
+	// Pre-scan first line for initial key/meter directives
+	firstTokens := tokenize(lines[0])
+	md0 := scanMeasureDirectives(firstTokens, 0, 4, 4)
+	currentFifths := md0.fifths
+	currentTimeNum := md0.timeNum
+	currentTimeDen := md0.timeDen
+	hasInitialMeter := md0.explicitMeter
+
+	// Save these for DSLResult return values
+	initialFifths := currentFifths
+	initialTimeNum := currentTimeNum
+	initialTimeDen := currentTimeDen
+
 	var measures []MeasureResult
 	var errs []string
 	lastMeasureHadNote := false
 
-	for mi, group := range measureTokenGroups {
-		hasSecondMeasure := len(measureTokenGroups) > 1
+	for mi, line := range lines {
+		hasSecondMeasure := mi < len(lines)-1
+		tokens := tokenize(line)
 
 		// Extract :H/:L directives from tail
-		notationTokens, chordRaw, lyricRaw := extractDirectivesTail(group)
+		notationTokens, chordRaw, lyricRaw := extractDirectivesTail(tokens)
 
 		// Scan directives from remaining tokens
 		md := scanMeasureDirectives(notationTokens, currentFifths, currentTimeNum, currentTimeDen)
@@ -1108,7 +1046,7 @@ func ParseDSL(text string) DSLResult {
 		markCrossMeasureTies(events, measures)
 
 		// Auto-detect time sig from content when no explicit directive
-		if !md.explicitMeter && !md.hasBeatCode && hasBarline && !(mi == 0 && hasInitialMeter) {
+		if !md.explicitMeter && !md.hasBeatCode && hasMultipleLines && !(mi == 0 && hasInitialMeter) {
 			actualTicks := totalTicks(events)
 			expectedTicks := timeSigTicks(effectiveTimeNum, effectiveTimeDen)
 			if actualTicks != expectedTicks && actualTicks > 0 {
@@ -1119,8 +1057,8 @@ func ParseDSL(text string) DSLResult {
 		}
 
 		// Validate against explicit M directive
-		hasExplicitMeter := (mi == 0 && hasInitialMeter && hasBarline) || md.explicitMeter
-		if errStr := validateExplicitMeter(events, effectiveTimeNum, effectiveTimeDen, group, mi, hasSecondMeasure, hasExplicitMeter, mi == 0); errStr != "" {
+		hasExplicitMeter := (mi == 0 && hasInitialMeter && hasMultipleLines) || md.explicitMeter
+		if errStr := validateExplicitMeter(events, effectiveTimeNum, effectiveTimeDen, tokens, mi, hasSecondMeasure, hasExplicitMeter, mi == 0); errStr != "" {
 			errs = append(errs, errStr)
 			if len(errs) >= 10 {
 				break
@@ -1176,9 +1114,9 @@ func ParseDSL(text string) DSLResult {
 
 	return DSLResult{
 		Measures: measures,
-		Key:      KeySignature{Fifths: fifths},
-		TimeNum:  timeNum,
-		TimeDen:  timeDen,
+		Key:      KeySignature{Fifths: initialFifths},
+		TimeNum:  initialTimeNum,
+		TimeDen:  initialTimeDen,
 		Err:      finalErr,
 	}
 }

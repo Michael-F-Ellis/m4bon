@@ -94,6 +94,7 @@ class M4bonApp {
     this.dslInput.addEventListener('input', () => this.onDSLChange());
     this.dslInput.addEventListener('keyup', () => this.highlightCursorMeasure());
     this.dslInput.addEventListener('click', () => this.highlightCursorMeasure());
+    this.dslInput.addEventListener('blur', () => this.reformatInput());
     this.volumeSlider.addEventListener('input', () => {
       this.velocity = parseInt(this.volumeSlider.value);
     });
@@ -155,15 +156,6 @@ class M4bonApp {
     this.debounceTimer = setTimeout(() => {
       this.dsl = this.dslInput.value;
       this.parseAndRender();
-      if (this.parsedData) {
-        const reformatted = this.reformatColumns(this.dsl);
-        if (reformatted !== this.dslInput.value) {
-          this.dslInput.value = reformatted;
-          this.dsl = reformatted;
-          this.autoResizeTextarea();
-          this.highlightCursorMeasure();
-        }
-      }
       this.saveState();
     }, 150);
   }
@@ -246,7 +238,7 @@ class M4bonApp {
   highlightCursorMeasure() {
     const pos = this.dslInput.selectionStart;
     const textBefore = this.dslInput.value.substring(0, pos);
-    const measureIdx = (textBefore.match(/\|/g) || []).length;
+    const measureIdx = (textBefore.match(/\n/g) || []).length;
 
     const divs = this.measuresEl.querySelectorAll('.m4bon-measure');
     divs.forEach(d => d.classList.remove('m4bon-cursor'));
@@ -274,24 +266,36 @@ class M4bonApp {
   // --- Auto-reformat on successful parse ---
 
   reformatColumns(dsl) {
-    // Extract leading directive tokens (M, K, T, L at start)
-    const tokens = dsl.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim().split(/\s+/);
-    const directives = [];
-    let i = 0;
-    while (i < tokens.length && /^[MKTL]\d/i.test(tokens[i])) {
-      directives.push(tokens[i]);
-      i++;
-    }
-    const rest = tokens.slice(i).join(' ');
+    // Split raw DSL into measure lines
+    const rawLines = dsl.split('\n').map(l => l.trim()).filter(l => l);
+    if (rawLines.length === 0) return dsl;
 
-    // Split by barline into measure texts
-    const measures = rest.split('|').map(p => p.trim()).filter(p => p);
-    if (measures.length === 0) return dsl;
+    // Extract global directives from the first line (K, M, T, L at start)
+    const firstTokens = rawLines[0].split(/\s+/);
+    const directives = [];
+    let fi = 0;
+    while (fi < firstTokens.length && /^[MKTL]\d/i.test(firstTokens[fi])) {
+      directives.push(firstTokens[fi]);
+      fi++;
+    }
+
+    // Lines 0..n-1: first line may continue with notation after directives
+    const measureLines = [];
+    if (fi > 0) {
+      // First line had directives; remainder of first line is first measure
+      const rem = firstTokens.slice(fi).join(' ');
+      if (rem) measureLines.push(rem);
+      for (let j = 1; j < rawLines.length; j++) measureLines.push(rawLines[j]);
+    } else {
+      for (const l of rawLines) measureLines.push(l);
+    }
+
+    if (measureLines.length === 0) return dsl;
 
     // Parse each measure into { notation, chords, lyrics } triples
     // Following the parser's extractDirectivesTail state machine: L→R,
     // state 0=notation, 1=chords(seen :H), 2=lyrics(seen :L)
-    const parsed = measures.map(m => {
+    const parsed = measureLines.map(m => {
       const words = m.split(/\s+/);
       const parts = { notation: [], chords: [], lyrics: [], hasH: false, hasL: false };
       let state = 0;
@@ -346,7 +350,6 @@ class M4bonApp {
         }
       }
 
-      line += ' |';
       out.push(line);
     }
 
@@ -355,6 +358,20 @@ class M4bonApp {
 
   render() {
     this.parseAndRender();
+  }
+
+  reformatInput() {
+    if (!this.parsedData) return;
+    const pos = this.dslInput.selectionStart;
+    const reformatted = this.reformatColumns(this.dslInput.value);
+    if (reformatted !== this.dslInput.value) {
+      this.dslInput.value = reformatted;
+      this.dsl = reformatted;
+      this.dslInput.selectionStart = Math.min(pos, reformatted.length);
+      this.dslInput.selectionEnd = Math.min(pos, reformatted.length);
+      this.autoResizeTextarea();
+      this.highlightCursorMeasure();
+    }
   }
 
   showError(msg) {
@@ -1190,7 +1207,13 @@ class M4bonApp {
   // --- Keyboard shortcuts ---
 
   onKeyDown(e) {
+    // Allow textarea typing to work normally, except Esc and Ctrl/Cmd+S
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        this.reformatInput();
+        return;
+      }
       if (e.key !== 'Escape') return;
     }
 

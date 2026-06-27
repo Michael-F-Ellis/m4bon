@@ -3,6 +3,7 @@ package midi
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,11 +13,25 @@ import (
 
 func parseDSL(t *testing.T, dsl string) []parser.MeasureResult {
 	t.Helper()
-	result := parser.ParseDSL(dsl)
+	result := parser.ParseDSL(sanitizeLines(dsl))
 	if result.Err != nil {
 		t.Fatalf("ParseDSL(%q): %v", dsl, result.Err)
 	}
 	return result.Measures
+}
+
+func sanitizeLines(dsl string) []string {
+	if strings.Contains(dsl, "|") {
+		var lines []string
+		for _, part := range strings.Split(dsl, "|") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				lines = append(lines, part)
+			}
+		}
+		return lines
+	}
+	return []string{dsl}
 }
 
 func TestGenerateSMF_BasicNotes(t *testing.T) {
@@ -251,7 +266,7 @@ func TestGenerateSMF_Timeline(t *testing.T) {
 }
 
 func TestGenerateSMF_Tuplets(t *testing.T) {
-	measures := parseDSL(t, "M4/4 abc def")
+	measures := parseDSL(t, "abc def")
 	_, _, err := GenerateSMF(measures, 120)
 	if err != nil {
 		t.Fatalf("GenerateSMF: %v", err)

@@ -292,7 +292,7 @@ func (m *model) reloadMeasures() string {
 	}
 
 	sanitized := parser.SanitizeDSL(dsl)
-	if sanitized == "" {
+	if len(sanitized) == 0 {
 		return "empty DSL after sanitization"
 	}
 
@@ -313,7 +313,7 @@ func (m *model) reloadMeasures() string {
 		return fmt.Sprintf("generate SMF: %v", err)
 	}
 
-	m.dslText = sanitized
+	m.dslText = strings.Join(sanitized, "\n")
 	m.measures = result.Measures
 	m.smfBytes = smfBytes
 	m.timeline = tl

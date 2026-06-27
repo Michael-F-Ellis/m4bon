@@ -9,9 +9,10 @@ import (
 )
 
 // rawCells calls buildMeasureCells on parsed DSL and returns cells for the first measure.
+// For backward compatibility, | in the DSL string is treated as a measure separator.
 func rawCells(t *testing.T, dsl string) CellSeq {
 	t.Helper()
-	r := parser.ParseDSL(dsl)
+	r := parser.ParseDSL(sanitizeLines(dsl))
 	if r.Err != nil {
 		t.Fatalf("ParseDSL(%q): %v", dsl, r.Err)
 	}
@@ -22,13 +23,30 @@ func rawCells(t *testing.T, dsl string) CellSeq {
 }
 
 // allMeasuresCells calls BuildCells on parsed DSL for all measures.
+// For backward compatibility, | in the DSL string is treated as a measure separator.
 func allMeasuresCells(t *testing.T, dsl string) []CellSeq {
 	t.Helper()
-	r := parser.ParseDSL(dsl)
+	r := parser.ParseDSL(sanitizeLines(dsl))
 	if r.Err != nil {
 		t.Fatalf("ParseDSL(%q): %v", dsl, r.Err)
 	}
 	return BuildCells(r.Measures, true)
+}
+
+// sanitizeLines splits a DSL string on | for backward compatibility with old test strings
+// that use | as a measure separator. If no | is present, returns a single-element slice.
+func sanitizeLines(dsl string) []string {
+	if strings.Contains(dsl, "|") {
+		var lines []string
+		for _, part := range strings.Split(dsl, "|") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				lines = append(lines, part)
+			}
+		}
+		return lines
+	}
+	return []string{dsl}
 }
 
 // cellByContent finds the first cell with the given Content prefix.
@@ -84,7 +102,7 @@ func TestBasicNotes(t *testing.T) {
 
 // TestAccidentals verifies that explicit accidentals produce correct styles.
 func TestAccidentals(t *testing.T) {
-	cells := rawCells(t, "M4/4 #f &b %c")
+	cells := rawCells(t, "#f &b %c")
 
 	fCell := cellByContent(cells, "f")
 	if fCell == nil {
@@ -170,7 +188,7 @@ func TestSustainChain(t *testing.T) {
 
 // TestChord verifies chord pitches have parentheses, italic, and correct styles.
 func TestChord(t *testing.T) {
-	cells := rawCells(t, "M4/4 (ace)f")
+	cells := rawCells(t, "(ace)f")
 
 	var italicCells []Cell
 	for _, c := range cells {
@@ -217,7 +235,7 @@ func TestChord(t *testing.T) {
 
 // TestOctaveSubscript verifies subscripts appear when octave shift is used.
 func TestOctaveSubscript(t *testing.T) {
-	cells := rawCells(t, "M4/4 c^c")
+	cells := rawCells(t, "c^c")
 
 	// Find all pitch letter cells
 	var pitchCells []Cell
@@ -262,7 +280,7 @@ func TestOctaveSubscriptFirstOnly(t *testing.T) {
 
 // TestDoubleAccidentals verifies double-sharp and double-flat styles.
 func TestDoubleAccidentals(t *testing.T) {
-	cells := rawCells(t, "M4/4 &&d ##c")
+	cells := rawCells(t, "&&d ##c")
 
 	dCell := cellByContent(cells, "d")
 	if dCell == nil {
@@ -435,7 +453,7 @@ func TestLeapFromShift(t *testing.T) {
 
 // TestLeapUpwardOctave verifies ^ produces LeapUp.
 func TestLeapUpwardOctave(t *testing.T) {
-	cells := rawCells(t, "M4/4 c ^a")
+	cells := rawCells(t, "c ^a")
 	aCell := cellByContent(cells, "a")
 	if aCell == nil {
 		t.Fatal("no 'a' cell found")
@@ -447,7 +465,7 @@ func TestLeapUpwardOctave(t *testing.T) {
 
 // TestLeapDownwardOctave verifies / produces LeapDown.
 func TestLeapDownwardOctave(t *testing.T) {
-	cells := rawCells(t, "M4/4 a /c")
+	cells := rawCells(t, "a /c")
 	cCell := cellByContent(cells, "c")
 	if cCell == nil {
 		t.Fatal("no 'c' cell found")
@@ -459,7 +477,7 @@ func TestLeapDownwardOctave(t *testing.T) {
 
 // TestLeapNoOctaveShift verifies no leap without ^ or /.
 func TestLeapNoOctaveShift(t *testing.T) {
-	cells := rawCells(t, "M4/4 c d e f g a b")
+	cells := rawCells(t, "c d e f g a b")
 	for _, letter := range []string{"d", "e", "f", "g", "a", "b"} {
 		cell := cellByContent(cells, letter)
 		if cell == nil {
@@ -474,7 +492,7 @@ func TestLeapNoOctaveShift(t *testing.T) {
 
 // TestLeapChordOctave verifies ^ and / inside chords produce leaps.
 func TestLeapChordOctave(t *testing.T) {
-	cells := rawCells(t, "M4/4 (c^ga)f")
+	cells := rawCells(t, "(c^ga)f")
 	// c→^g = LeapUp, ^g→a = LeapNone
 	gCell := cellByContent(cells, "g")
 	if gCell == nil {
@@ -494,7 +512,7 @@ func TestLeapChordOctave(t *testing.T) {
 
 // TestLeapChordFirstToneOctave verifies first chord tone with ^ is a leap.
 func TestLeapChordFirstToneOctave(t *testing.T) {
-	cells := rawCells(t, "M4/4 c (^ga)f")
+	cells := rawCells(t, "c (^ga)f")
 	gCell := cellByContent(cells, "g")
 	if gCell == nil {
 		t.Fatal("no 'g' cell found")
@@ -506,7 +524,7 @@ func TestLeapChordFirstToneOctave(t *testing.T) {
 
 // TestLeapFormatUnicode verifies that FormatANSI with asciiLeaps=false produces combining diacritics.
 func TestLeapFormatUnicode(t *testing.T) {
-	cells := rawCells(t, "M4/4 c ^a")
+	cells := rawCells(t, "c ^a")
 	aCell := cellByContent(cells, "a")
 	if aCell == nil {
 		t.Fatal("no 'a' cell found")
@@ -523,7 +541,7 @@ func TestLeapFormatUnicode(t *testing.T) {
 
 // TestLeapFormatASCII verifies that FormatANSI with asciiLeaps=true produces ANSI escapes.
 func TestLeapFormatASCII(t *testing.T) {
-	cells := rawCells(t, "M4/4 c ^a")
+	cells := rawCells(t, "c ^a")
 	aCell := cellByContent(cells, "a")
 	if aCell == nil {
 		t.Fatal("no 'a' cell found")
@@ -590,7 +608,7 @@ func TestRenderWithLeaps(t *testing.T) {
 func TestLeapMeasure3(t *testing.T) {
 	// This is the third measure from the user's report
 	// `&c/&e` — c should NOT be a leap, e (/&e) SHOULD be LeapDown
-	cells := rawCells(t, "M4/4 &c/&e")
+	cells := rawCells(t, "&c/&e")
 
 	cCell := cellByContent(cells, "c")
 	if cCell == nil {
@@ -614,7 +632,7 @@ func TestLeapMeasure3(t *testing.T) {
 // allRows calls BuildRows on parsed DSL for all measures.
 func allRows(t *testing.T, dsl string) ([]MeasureRow, int, int, int) {
 	t.Helper()
-	r := parser.ParseDSL(dsl)
+	r := parser.ParseDSL(sanitizeLines(dsl))
 	if r.Err != nil {
 		t.Fatalf("ParseDSL(%q): %v", dsl, r.Err)
 	}
@@ -741,7 +759,7 @@ func TestRenderLyricMelisma(t *testing.T) {
 func TestRenderLyricAfterRest(t *testing.T) {
 	// The rest `;` in ;e should NOT consume a lyric token.
 	// Lyric tokens map only to active note attacks.
-	rows, _, _, _ := allRows(t, "M4/4 ;e fe f e :L My heart is sad |")
+	rows, _, _, _ := allRows(t, ";e fe f e :L My heart is sad |")
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
@@ -758,7 +776,7 @@ func TestRenderLyricAfterRest(t *testing.T) {
 }
 
 func TestFormatPlainRowsThreeColumn(t *testing.T) {
-	r := parser.ParseDSL("M4/4 c d e f :H C - G7 - :L My heart is sad |")
+	r := parser.ParseDSL([]string{"M4/4 c d e f :H C - G7 - :L My heart is sad"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}

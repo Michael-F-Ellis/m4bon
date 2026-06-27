@@ -8,7 +8,7 @@ import (
 )
 
 func TestParseBasicNotes(t *testing.T) {
-	r := ParseDSL("c d e f")
+	r := ParseDSL([]string{"c d e f"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -27,7 +27,7 @@ func TestParseBasicNotes(t *testing.T) {
 }
 
 func TestParseSustainChain(t *testing.T) {
-	r := ParseDSL("a - -b c")
+	r := ParseDSL([]string{"a - -b c"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -46,7 +46,7 @@ func TestParseSustainChain(t *testing.T) {
 }
 
 func TestParseTuplet(t *testing.T) {
-	r := ParseDSL("abc")
+	r := ParseDSL([]string{"abc"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -67,7 +67,7 @@ func TestParseTuplet(t *testing.T) {
 }
 
 func TestParseChord(t *testing.T) {
-	r := ParseDSL("(ace)f")
+	r := ParseDSL([]string{"(ace)f"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -97,7 +97,7 @@ func TestParseOctaveShift(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
-			r := ParseDSL(tc.dsl)
+			r := ParseDSL([]string{tc.dsl})
 			if r.Err != nil {
 				t.Fatalf("unexpected error: %v", r.Err)
 			}
@@ -122,7 +122,7 @@ func TestParseOctaveShift(t *testing.T) {
 
 func TestParseAccidentalNatural(t *testing.T) {
 	// &&d&d%d#d##d = Dbb, Db, Dn, D#, D##
-	r := ParseDSL("&&d&d%d#d##d")
+	r := ParseDSL([]string{"&&d&d%d#d##d"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -144,7 +144,7 @@ func TestParseAccidentalNatural(t *testing.T) {
 }
 
 func TestParseCompoundTime(t *testing.T) {
-	r := ParseDSL("M6/8 abc def")
+	r := ParseDSL([]string{"M6/8 abc def"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -173,7 +173,7 @@ func TestParseErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
-			r := ParseDSL(tc.dsl)
+			r := ParseDSL([]string{tc.dsl})
 			if r.Err == nil {
 				t.Errorf("expected error for %s", tc.desc)
 			}
@@ -201,25 +201,24 @@ func TestParseDSLFiles(t *testing.T) {
 			if err != nil {
 				t.Fatalf("cannot read %s: %v", path, err)
 			}
-			// Strip comments
-			var dslParts []string
+			// Read lines, strip comments, pass directly to ParseDSL
+			var lines []string
 			for _, line := range strings.Split(string(data), "\n") {
 				line = strings.TrimSpace(line)
 				if line == "" || strings.HasPrefix(line, "#") {
 					continue
 				}
-				dslParts = append(dslParts, line)
+				lines = append(lines, line)
 			}
-			dsl := strings.Join(dslParts, " ")
-			if dsl == "" {
+			if len(lines) == 0 {
 				t.Skip("empty DSL file")
 			}
-			r := ParseDSL(dsl)
+			r := ParseDSL(lines)
 			if r.Err != nil {
-				t.Fatalf("parse error for %s (%q): %v", name, dsl, r.Err)
+				t.Fatalf("parse error for %s: %v", name, r.Err)
 			}
 			if len(r.Measures) == 0 {
-				t.Fatalf("no measures produced for %s (%q)", name, dsl)
+				t.Fatalf("no measures produced for %s", name)
 			}
 		})
 	}
@@ -227,7 +226,7 @@ func TestParseDSLFiles(t *testing.T) {
 
 func TestParseVoicePolyChord(t *testing.T) {
 	// (c) (-e) starts voice 1 with C, then extends v1 and starts v2 with E
-	r := ParseDSL("(c) (-e)")
+	r := ParseDSL([]string{"(c) (-e)"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -250,14 +249,14 @@ func TestParseVoicePolyChord(t *testing.T) {
 
 func TestParseVoicePolyThreeEntry(t *testing.T) {
 	// (c - e) as a single group errors because sustain at entry 1 is voice 2 with no prior
-	r := ParseDSL("(c-e)")
+	r := ParseDSL([]string{"(c-e)"})
 	if r.Err == nil {
 		t.Errorf("expected error: sustain in voice 2 with no prior note")
 	}
 }
 
 func TestParseVoicePolyWithRest(t *testing.T) {
-	r := ParseDSL("(c;e)")
+	r := ParseDSL([]string{"(c;e)"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -278,7 +277,7 @@ func TestParseVoicePolyWithRest(t *testing.T) {
 }
 
 func TestParseVoicePolyTraditionalUnchanged(t *testing.T) {
-	r := ParseDSL("(ceg)")
+	r := ParseDSL([]string{"(ceg)"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -297,12 +296,12 @@ func TestParseVoicePolyTraditionalUnchanged(t *testing.T) {
 
 func TestParseVoicePolySustainError(t *testing.T) {
 	// (-e) has sustain at entry 0 (voice 1) with no prior
-	r := ParseDSL("(-e)")
+	r := ParseDSL([]string{"(-e)"})
 	if r.Err == nil {
 		t.Errorf("expected error for sustain with no prior note")
 	}
 	// (c-e) has sustain at entry 1 (voice 2) with no prior voice 2
-	r2 := ParseDSL("(c-e)")
+	r2 := ParseDSL([]string{"(c-e)"})
 	if r2.Err == nil {
 		t.Errorf("expected error for sustain in voice 2 with no prior note")
 	}
@@ -311,7 +310,7 @@ func TestParseVoicePolySustainError(t *testing.T) {
 func TestParseVoicePolyThreeGroupSustain(t *testing.T) {
 	// (c) (-e) (-g) → v1: C dotted half (3/4) split at midpoint of 4/4,
 	// so C half + C eighth(continuation) + v2: E+G quarters
-	r := ParseDSL("(c) (-e) (-g)")
+	r := ParseDSL([]string{"(c) (-e) (-g)"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -344,7 +343,7 @@ func TestParseVoicePolyThreeGroupSustain(t *testing.T) {
 }
 
 func TestExtractChordDirective(t *testing.T) {
-	r := ParseDSL("M4/4 c d e f :H C - G7 - |")
+	r := ParseDSL([]string{"M4/4 c d e f :H C - G7 -"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -374,7 +373,7 @@ func TestExtractChordDirective(t *testing.T) {
 }
 
 func TestExtractLyricDirective(t *testing.T) {
-	r := ParseDSL("M4/4 c d e f :L My heart is sad |")
+	r := ParseDSL([]string{"M4/4 c d e f :L My heart is sad"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -404,7 +403,7 @@ func TestExtractLyricDirective(t *testing.T) {
 
 func TestExtractBothOrderIndependent(t *testing.T) {
 	// :H before :L
-	r := ParseDSL("M4/4 c d e f :H C - G7 - :L My heart is sad |")
+	r := ParseDSL([]string{"M4/4 c d e f :H C - G7 - :L My heart is sad"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -420,7 +419,7 @@ func TestExtractBothOrderIndependent(t *testing.T) {
 	}
 
 	// :L before :H (order-independent)
-	r2 := ParseDSL("M4/4 c d e f :L My heart is sad :H C - G7 - |")
+	r2 := ParseDSL([]string{"M4/4 c d e f :L My heart is sad :H C - G7 -"})
 	if r2.Err != nil {
 		t.Fatalf("unexpected error: %v", r2.Err)
 	}
@@ -437,7 +436,7 @@ func TestExtractBothOrderIndependent(t *testing.T) {
 }
 
 func TestNoDirectives(t *testing.T) {
-	r := ParseDSL("M4/4 c d e f |")
+	r := ParseDSL([]string{"M4/4 c d e f"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -459,7 +458,7 @@ func TestNoDirectives(t *testing.T) {
 func TestEmptyDirectiveIgnored(t *testing.T) {
 	// Empty :H and :L directives are accepted (no tokens between them and |)
 	// but produce empty slices and HasChords/HasLyrics are false.
-	r := ParseDSL("M4/4 c d e f :H :L |")
+	r := ParseDSL([]string{"M4/4 c d e f :H :L"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
@@ -479,7 +478,7 @@ func TestEmptyDirectiveIgnored(t *testing.T) {
 }
 
 func TestMultiMeasureChordLyric(t *testing.T) {
-	r := ParseDSL("M4/4 c d e f :H C - G7 - | M4/4 a b c d :L One two three four |")
+	r := ParseDSL([]string{"M4/4 c d e f :H C - G7 -", "M4/4 a b c d :L One two three four"})
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}

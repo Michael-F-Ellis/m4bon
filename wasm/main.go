@@ -153,12 +153,12 @@ func parseWrapper(this js.Value, args []js.Value) interface{} {
 		return errMsg("m4bonParse: invalid JSON: " + err.Error())
 	}
 
-	dsl := parser.SanitizeDSL(req.DSL)
-	if dsl == "" {
+	lines := parser.SanitizeDSL(req.DSL)
+	if len(lines) == 0 {
 		return errMsg("m4bonParse: empty DSL after sanitization")
 	}
 
-	result := parser.ParseDSL(dsl)
+	result := parser.ParseDSL(lines)
 	if result.Err != nil {
 		return errMsg("m4bonParse: " + result.Err.Error())
 	}
@@ -207,12 +207,12 @@ func renderHTMLWrapper(this js.Value, args []js.Value) interface{} {
 		return errMsg("m4bonRenderHTML: invalid JSON: " + err.Error())
 	}
 
-	dsl := parser.SanitizeDSL(req.DSL)
-	if dsl == "" {
+	lines := parser.SanitizeDSL(req.DSL)
+	if len(lines) == 0 {
 		return errMsg("m4bonRenderHTML: empty DSL after sanitization")
 	}
 
-	result := parser.ParseDSL(dsl)
+	result := parser.ParseDSL(lines)
 	if result.Err != nil {
 		return errMsg("m4bonRenderHTML: " + result.Err.Error())
 	}
@@ -236,12 +236,12 @@ func smfWrapper(this js.Value, args []js.Value) interface{} {
 		req.BPM = 120
 	}
 
-	dsl := parser.SanitizeDSL(req.DSL)
-	if dsl == "" {
+	lines := parser.SanitizeDSL(req.DSL)
+	if len(lines) == 0 {
 		return errMsg("m4bonGenerateSMF: empty DSL after sanitization")
 	}
 
-	result := parser.ParseDSL(dsl)
+	result := parser.ParseDSL(lines)
 	if result.Err != nil {
 		return errMsg("m4bonGenerateSMF: " + result.Err.Error())
 	}
@@ -268,12 +268,12 @@ func xmlWrapper(this js.Value, args []js.Value) interface{} {
 		return errMsg("m4bonGenerateXML: invalid JSON: " + err.Error())
 	}
 
-	dsl := parser.SanitizeDSL(req.DSL)
-	if dsl == "" {
+	lines := parser.SanitizeDSL(req.DSL)
+	if len(lines) == 0 {
 		return errMsg("m4bonGenerateXML: empty DSL after sanitization")
 	}
 
-	result := parser.ParseDSL(dsl)
+	result := parser.ParseDSL(lines)
 	if result.Err != nil {
 		return errMsg("m4bonGenerateXML: " + result.Err.Error())
 	}

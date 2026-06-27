@@ -6,19 +6,20 @@
 # the full binary compiles.
 #
 # Usage:
-#   make        Build binary + run tests (default)
+#   make        Build the world + run tests (default)
+#   make all    Same as make
 #   make build  Build the m4bon binary only
-#   make test   Run all tests (without building binary)
+#   make test   Run all tests (without building)
 #   make check  Build + test + vet
-#   make clean  Remove build artifacts
+#   make clean  Remove build artifacts (binaries, WASM, object files)
 #   make golden Update golden test files
 
 BINARY := m4bon
 GO := go
 
-.PHONY: all build test check clean golden notify wasm gh-pages
+.PHONY: all build test check clean golden notify wasm gh-pages serve
 
-all: build test
+all: build wasm test
 
 build:
 	$(GO) build -o $(BINARY) ./cmd/m4bon/
@@ -26,11 +27,11 @@ build:
 test:
 	$(GO) test ./...
 
-check: build test
+check: build wasm test
 	$(GO) vet ./...
 
 clean:
-	rm -f $(BINARY)
+	rm -f $(BINARY) web/m4bon.wasm
 	$(GO) clean ./...
 
 golden:
@@ -51,3 +52,9 @@ wasm:
 # Then enable GitHub Pages in repo Settings → Pages → Source: "Deploy from branch" → gh-pages.
 gh-pages: wasm
 	@./scripts/deploy-gh-pages.sh
+
+# Serve the web app locally on port 8087 for development.
+# Kills any existing listener on that port first.
+serve:
+	@lsof -ti:8087 | xargs kill -9 2>/dev/null; true
+	cd web && python3 -m http.server 8087

@@ -81,7 +81,6 @@ m4bon/
 | Rest | `;` |
 | Chord open | `(` |
 | Chord close | `)` |
-| Barline (ignored) | `|` |
 | Chord symbols | `:H` |
 | Lyrics | `:L` |
 
@@ -192,15 +191,18 @@ Three-column layout in `-render` and TUI: `CHORDS : NOTES : LYRICS`. Columns onl
 ## Pipeline
 
 ```
-DSL text → stripDirectives (extract K, M) → sanitize → tokenize
-         → extractDirectivesTail (:H, :L) → parseGroup
+DSL text (newline-separated measures) → sanitize → tokenize (per line)
+         → scanMeasureDirectives (K, M, B, :H, :L) → parseGroup
          → resolveDurations → splitAtBarline → splitNonStandardDurations → resolveOctaves → MusicXML
 ```
+
+Each line of input is one measure. Blank lines are ignored. Comments (`# text`) are stripped.
 
 ### Output: MusicXML
 
 - `<score-partwise>` with `<attributes>`, `<note>`, `<tie>`, `<time-modification>`
 - 480 DPPQ (divisions per quarter note)
+- Measures separated by newlines; end-of-file terminates the final measure
 - MIDI-to-MusicXML: `octave = midi/12 - 1` (MIDI 60 = C4)
 
 ---
@@ -294,15 +296,16 @@ go test ./...                    # Run all tests (0.4s)
 ```go
 import "github.com/mellis/m4bon"
 
-xml, err := m4bon.Compile("M4/4 (c) (-e) (-g) | (-f) (d-) (b-) | (ce) - -")
+xml, err := m4bon.Compile("M4/4 (c) (-e) (-g)\n(-f) (d-) (b-)\n(ce) - -")
 text, err := m4bon.Render("M4/4 c d e f")  // ANSI-escaped color text
 text, err := m4bon.Render("M4/4 c d e f :H C - G7 - :L My heart is sad")  // three-column
 
 // MIDI generation (darwin+cgo only)
 import "github.com/mellis/m4bon/midi"
 import "github.com/mellis/m4bon/parser"
-measures := parser.ParseDSL("M4/4 c d e f")
-smfBytes, timeline, err := midi.GenerateSMF(measures.Measures, 120)
+lines := parser.SanitizeDSL("M4/4 c d e f")
+result := parser.ParseDSL(lines)
+smfBytes, timeline, err := midi.GenerateSMF(result.Measures, 120)
 
 // With options:
 opts := midi.SMFOptions{Metronome: true, Roots: true, Backbeats: true}
@@ -365,12 +368,12 @@ When `-render` is set, each measure is output as one line:
 - Single staff (piano), maximum 4 voices per chord
 - No nested chords inside voice-poly groups
 - Voice-poly tuplet combinations not yet supported
-- Barline split covers 4/4 midpoint only — odd time sigs may need adjustment
+- Barline (invisible midpoint) split covers 4/4 midpoint only — odd time sigs may need adjustment
 - Beaming may be incomplete for multi-voice measures (same-voice notes at non-adjacent sorted positions)
 - Render uses beat-group index grouping (GroupIdx on Event), not tick positions
 - Cross-measure sustain for voice-poly is fragile: `priorEvents[1]` hard-coded in legacy sustain path (pipeline.go lines 68, 152). When a voice-poly chord follows a traditional chord (e.g. `(c d e) | (- - g)`), the individual pitches of the traditional chord must be findable through the voice 1 prior event. Sustain-after-rest semantics (e.g. `(c ; e) | (- ; g)`) require nil-sentinel handling — a rest establishes the voice but doesn't provide a pitch to extend.
 - `encoding/xml` produces `<chord>true</chord>` instead of spec-conformant `<chord/>`. Most renderers accept this.
 - Render accidentals follow measure-level persistence (an accidental on a letter affects subsequent same-letter notes), which matches Engraving Rules but differs from some DAW conventions that reset per beat.
-- Sustains across barlines use the relative-octave pitch of the source note, not the absolute octave from `^`/`/`. `OctaveShift` is intentionally zeroed on sustain events.
+- Sustains across measure boundaries use the relative-octave pitch of the source note, not the absolute octave from `^`/`/`. `OctaveShift` is intentionally zeroed on sustain events.
 - TUI line truncation (`view.go`) is ANSI-aware and rune-safe; the old byte-based slicing could bisect ANSI sequences and garble the display.
 - `buildLyricCells` previously skipped `EventRest` and `Split` events, causing lyric tokens for rests/sustains to be silently dropped. Now iterates `m.Lyrics` directly and renders `;` tokens in grey (matching rest/sustain style in note column).

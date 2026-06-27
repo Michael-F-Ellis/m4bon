@@ -6,7 +6,7 @@
 //
 //	xml, err := m4bon.Compile("c d e f")
 //	xml, err := m4bon.Compile("M6/8 abc def")
-//	xml, err := m4bon.Compile("KE& (c) (-e) (-g) | (-f) (d-) (b-) | (ce) - -")
+//	xml, err := m4bon.Compile("KE&\n(c) (-e) (-g)\n(-f) (d-) (b-)\n(ce) - -")
 package m4bon
 
 import (
@@ -20,11 +20,11 @@ import (
 // Compile parses m4bon DSL text and returns the MusicXML output as a string.
 // It accepts the same DSL syntax as the m4bon CLI tool.
 func Compile(dsl string) (string, error) {
-	dsl = parser.SanitizeDSL(dsl)
-	if dsl == "" {
+	lines := parser.SanitizeDSL(dsl)
+	if len(lines) == 0 {
 		return "", fmt.Errorf("empty DSL after sanitization")
 	}
-	result := parser.ParseDSL(dsl)
+	result := parser.ParseDSL(lines)
 	if result.Err != nil {
 		return "", result.Err
 	}
@@ -47,11 +47,11 @@ func Render(dsl string) (string, error) {
 // asciiLeaps uses ANSI escapes (overline/underline) instead of
 // Unicode combining diacritics for leap indicators.
 func RenderOptions(dsl string, asciiLeaps bool) (string, error) {
-	dsl = parser.SanitizeDSL(dsl)
-	if dsl == "" {
+	lines := parser.SanitizeDSL(dsl)
+	if len(lines) == 0 {
 		return "", fmt.Errorf("empty DSL after sanitization")
 	}
-	result := parser.ParseDSL(dsl)
+	result := parser.ParseDSL(lines)
 	if result.Err != nil {
 		return "", result.Err
 	}

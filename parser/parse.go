@@ -274,7 +274,7 @@ func countActivePositions(slots []Slot) int {
 // SanitizeDSL strips comments and trims whitespace from DSL text.
 // A comment is a line whose first non-whitespace character is '#' followed
 // by whitespace (or just '#' alone). Bare '#c' is NOT treated as a comment.
-func SanitizeDSL(text string) string {
+func SanitizeDSL(text string) []string {
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -287,7 +287,7 @@ func SanitizeDSL(text string) string {
 		}
 		lines = append(lines, trimmed)
 	}
-	return strings.Join(lines, " ")
+	return lines
 }
 
 func normalizePitchInput(text string) string {

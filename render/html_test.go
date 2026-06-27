@@ -10,7 +10,7 @@ import (
 // parseDSL returns parsed measures for DSL input. Helper for FormatHTMLRows tests.
 func parseDSL(t *testing.T, dsl string) parser.DSLResult {
 	t.Helper()
-	result := parser.ParseDSL(dsl)
+	result := parser.ParseDSL(sanitizeLines(dsl))
 	if result.Err != nil {
 		t.Fatalf("ParseDSL(%q): %v", dsl, result.Err)
 	}
@@ -38,7 +38,7 @@ func TestFormatHTML_BasicNotes(t *testing.T) {
 }
 
 func TestFormatHTML_Accidentals(t *testing.T) {
-	cells := rawCells(t, "M4/4 #f &b %c")
+	cells := rawCells(t, "#f &b %c")
 	html := FormatHTML([]CellSeq{cells}, false)
 
 	if !strings.Contains(html, "m4bon-sharp") {
@@ -51,7 +51,7 @@ func TestFormatHTML_Accidentals(t *testing.T) {
 }
 
 func TestFormatHTML_Chord(t *testing.T) {
-	cells := rawCells(t, "M4/4 (ace)f")
+	cells := rawCells(t, "(ace)f")
 	html := FormatHTML([]CellSeq{cells}, false)
 
 	if !strings.Contains(html, "m4bon-italic") {
@@ -75,7 +75,7 @@ func TestFormatHTML_Sustains(t *testing.T) {
 }
 
 func TestFormatHTML_Leaps(t *testing.T) {
-	cells := rawCells(t, "M4/4 ^c /d")
+	cells := rawCells(t, "^c /d")
 	html := FormatHTML([]CellSeq{cells}, false)
 
 	if !strings.Contains(html, "&#x302;") {
@@ -87,7 +87,7 @@ func TestFormatHTML_Leaps(t *testing.T) {
 }
 
 func TestFormatHTML_ASCIILeaps(t *testing.T) {
-	cells := rawCells(t, "M4/4 ^c /d")
+	cells := rawCells(t, "^c /d")
 	html := FormatHTML([]CellSeq{cells}, true)
 
 	if strings.Contains(html, "&#x302;") || strings.Contains(html, "&#x331;") {

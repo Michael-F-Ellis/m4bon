@@ -77,7 +77,6 @@ func main() {
 
 	// TUI mode
 	if *tuiFlag {
-		dsl = parser.SanitizeDSL(dsl)
 		err := tui.Run(dsl, dslLabel, *bpmFlag, *asciiLeaps)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
@@ -86,13 +85,13 @@ func main() {
 		return
 	}
 
-	dsl = parser.SanitizeDSL(dsl)
-	if dsl == "" {
+	lines := parser.SanitizeDSL(dsl)
+	if len(lines) == 0 {
 		fmt.Fprintln(os.Stderr, "Empty DSL input after sanitization")
 		os.Exit(1)
 	}
 
-	result := parser.ParseDSL(dsl)
+	result := parser.ParseDSL(lines)
 	if result.Err != nil {
 		fmt.Fprintf(os.Stderr, "Parse error: %v\n", result.Err)
 		os.Exit(1)
