@@ -38,10 +38,12 @@ class M4bonApp {
     this.startMeasure = 0;
     this.endMeasure = 0;
     this.showSubscripts = true;
+    this.showComments = true;
     this.metronomeOn = true;
     this.rootsOn = false;
     this.backbeatsOn = false;
-    this.velocity = 90;
+    this.velocity = 45;
+    this.metronomeVol = 50; // 0-100: metronome click volume relative to playback
     this.isPlaying = false;
     this.isRecording = false;
     this.parsedData = null;
@@ -69,6 +71,12 @@ class M4bonApp {
     this.playbackTimer = null;
     this.measureHighlightTimer = null;
     this.debounceTimer = null;
+    this._scheduledNotes = null;
+    this._schedulerIdx = 0;
+    this._schedulerTimer = null;
+    this._playbackEndTime = 0;
+    this._keepAliveOsc = null;
+    this._keepAliveGain = null;
 
     this.initDOM();
     this.loadState();
@@ -87,13 +95,16 @@ class M4bonApp {
     this.rangeDisplay = document.getElementById('range-display');
     this.volumeSlider = document.getElementById('volume-slider');
     this.chkMetronome = document.getElementById('chk-metronome');
+    this.metroVolSlider = document.getElementById('metro-volume');
     this.chkSubscripts = document.getElementById('chk-subscripts');
+    this.chkComments = document.getElementById('chk-comments');
     this.chkRoots = document.getElementById('chk-roots');
     this.chkBackbeats = document.getElementById('chk-backbeats');
 
     this.dslInput.addEventListener('input', () => this.onDSLChange());
     this.dslInput.addEventListener('keyup', () => this.highlightCursorMeasure());
     this.dslInput.addEventListener('click', () => this.highlightCursorMeasure());
+    this.dslInput.addEventListener('blur', () => this.reformatInput());
     this.volumeSlider.addEventListener('input', () => {
       this.velocity = parseInt(this.volumeSlider.value);
     });
@@ -117,8 +128,20 @@ class M4bonApp {
     this.chkMetronome.addEventListener('change', () => {
       this.metronomeOn = this.chkMetronome.checked;
     });
+    this.metroVolSlider.addEventListener('input', () => {
+      this.metronomeVol = parseInt(this.metroVolSlider.value);
+      if (this.metronomeOn && !this.isPlaying) {
+        // Play a test click so user can hear the level
+        if (this.audioCtx && this.audioCtx.state === 'suspended') this.audioCtx.resume();
+        this._scheduleClick(this.audioCtx ? this.audioCtx.currentTime + 0.05 : performance.now() / 1000 + 0.05, true);
+      }
+    });
     this.chkSubscripts.addEventListener('change', () => {
       this.showSubscripts = this.chkSubscripts.checked;
+      this.updateMeasures();
+    });
+    this.chkComments.addEventListener('change', () => {
+      this.showComments = this.chkComments.checked;
       this.updateMeasures();
     });
     this.chkRoots.addEventListener('change', () => {
@@ -135,6 +158,7 @@ class M4bonApp {
     document.getElementById('btn-save-mxl').addEventListener('click', () => this.saveMXL());
     document.getElementById('btn-save-dsl').addEventListener('click', () => this.saveDSL());
     document.getElementById('btn-copy').addEventListener('click', () => this.copyDSL());
+    document.getElementById('btn-examples').addEventListener('click', () => this.downloadExamples());
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     window.addEventListener('resize', () => this.autoResizeTextarea());
@@ -155,15 +179,6 @@ class M4bonApp {
     this.debounceTimer = setTimeout(() => {
       this.dsl = this.dslInput.value;
       this.parseAndRender();
-      if (this.parsedData) {
-        const reformatted = this.reformatColumns(this.dsl);
-        if (reformatted !== this.dslInput.value) {
-          this.dslInput.value = reformatted;
-          this.dsl = reformatted;
-          this.autoResizeTextarea();
-          this.highlightCursorMeasure();
-        }
-      }
       this.saveState();
     }, 150);
   }
@@ -213,6 +228,7 @@ class M4bonApp {
       const result = JSON.parse(m4bonRenderHTML(JSON.stringify({
         dsl: this.dsl,
         showSubscripts: this.showSubscripts,
+        showComments: this.showComments,
         asciiLeaps: false
       })));
       if (result.ok) {
@@ -226,34 +242,87 @@ class M4bonApp {
   }
 
   highlightMeasures() {
-    const divs = this.measuresEl.querySelectorAll('.m4bon-measure');
-    const total = divs.length;
+    const measureEls = this.measuresEl.querySelectorAll('.m4bon-measure');
+    const total = measureEls.length;
     if (total === 0) return;
 
-    divs.forEach(d => {
-      d.classList.remove('m4bon-start', 'm4bon-end', 'm4bon-playing');
-    });
+    // Target all rendered elements so the green line spans comments too.
+    const allEls = this.measuresEl.querySelectorAll('.m4bon-measure, .m4bon-comment-line');
+    allEls.forEach(d => d.classList.remove('m4bon-start', 'm4bon-playing'));
 
-    if (this.startMeasure > 0 && this.startMeasure < total) {
-      divs[this.startMeasure].classList.add('m4bon-start');
-    }
+    const rangeStart = this.startMeasure;
+    const rangeEnd = this.endMeasure > 0 ? this.endMeasure : total;
 
-    if (this.endMeasure > 0 && this.endMeasure <= total) {
-      divs[this.endMeasure - 1].classList.add('m4bon-end');
+    // Only show the range line when a sub-range is selected.
+    if (rangeStart > 0 || rangeEnd < total) {
+      const measureArray = Array.from(measureEls);
+      const startEl = measureArray[rangeStart];
+      const endEl = measureArray[rangeEnd - 1];
+
+      if (startEl && endEl) {
+        let marking = false;
+        for (const el of allEls) {
+          if (el === startEl) marking = true;
+          if (marking) {
+            el.classList.add('m4bon-start');
+          }
+          if (el === endEl) break;
+        }
+      }
     }
   }
 
   highlightCursorMeasure() {
+    const allElements = this.measuresEl.querySelectorAll('.m4bon-measure, .m4bon-comment-line');
+    allElements.forEach(d => d.classList.remove('m4bon-cursor'));
+
+    // Suppress cursor highlight during playback or recording to avoid
+    // conflicting with the moving measure-position highlight.
+    if (this.isPlaying || this.isRecording) return;
+
     const pos = this.dslInput.selectionStart;
     const textBefore = this.dslInput.value.substring(0, pos);
-    const measureIdx = (textBefore.match(/\|/g) || []).length;
+    const lineIdx = (textBefore.match(/\n/g) || []).length;
 
-    const divs = this.measuresEl.querySelectorAll('.m4bon-measure');
-    divs.forEach(d => d.classList.remove('m4bon-cursor'));
+    const lines = this.dslInput.value.split('\n');
+    const trimmed = lines[lineIdx].trim();
+    if (!trimmed) return; // blank line — nothing to highlight
 
-    if (measureIdx < divs.length) {
-      divs[measureIdx].classList.add('m4bon-cursor');
-      divs[measureIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // If cursor is on a comment and comments are hidden, skip forward
+    // to the next measure line so something still highlights.
+    let targetLine = lineIdx;
+    if (!this.showComments && trimmed.startsWith('!')) {
+      for (let j = lineIdx + 1; j < lines.length; j++) {
+        const t = lines[j].trim();
+        if (t && !t.startsWith('!')) {
+          targetLine = j;
+          break;
+        }
+      }
+      if (targetLine === lineIdx) return; // no measure found after cursor
+    }
+
+    // Count rendered elements (measures + visible comment blocks) before targetLine.
+    // Consecutive ! lines form a single comment block, rendered as one element.
+    let renderedIdx = 0;
+    let inCommentBlock = false;
+    for (let i = 0; i < targetLine; i++) {
+      const t = lines[i].trim();
+      if (!t) continue;
+      if (t.startsWith('!')) {
+        if (!inCommentBlock) {
+          if (this.showComments) renderedIdx++;
+          inCommentBlock = true;
+        }
+      } else {
+        inCommentBlock = false;
+        renderedIdx++;
+      }
+    }
+
+    if (renderedIdx < allElements.length) {
+      allElements[renderedIdx].classList.add('m4bon-cursor');
+      allElements[renderedIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }
 
@@ -274,26 +343,20 @@ class M4bonApp {
   // --- Auto-reformat on successful parse ---
 
   reformatColumns(dsl) {
-    // Extract leading directive tokens (M, K, T, L at start)
-    const tokens = dsl.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim().split(/\s+/);
-    const directives = [];
-    let i = 0;
-    while (i < tokens.length && /^[MKTL]\d/i.test(tokens[i])) {
-      directives.push(tokens[i]);
-      i++;
-    }
-    const rest = tokens.slice(i).join(' ');
+    // Split raw DSL into lines, trimming each.
+    // Never re-order or split lines — each line stays at its original position.
+    const rawLines = dsl.split('\n').map(l => l.trim());
+    if (rawLines.length === 0) return dsl;
 
-    // Split by barline into measure texts
-    const measures = rest.split('|').map(p => p.trim()).filter(p => p);
-    if (measures.length === 0) return dsl;
-
-    // Parse each measure into { notation, chords, lyrics } triples
+    // Parse each line. Comment lines (! ...) stay as raw text;
+    // measure lines are split into { notation, chords, lyrics } triples.
     // Following the parser's extractDirectivesTail state machine: L→R,
     // state 0=notation, 1=chords(seen :H), 2=lyrics(seen :L)
-    const parsed = measures.map(m => {
-      const words = m.split(/\s+/);
-      const parts = { notation: [], chords: [], lyrics: [], hasH: false, hasL: false };
+    const entries = rawLines.map(l => {
+      if (!l) return null;
+      if (l.startsWith('!')) return { type: 'comment', text: l };
+      const words = l.split(/\s+/);
+      const parts = { type: 'measure', notation: [], chords: [], lyrics: [], hasH: false, hasL: false };
       let state = 0;
       for (const w of words) {
         if (w === ':H' || w === ':h') { state = 1; parts.hasH = true; continue; }
@@ -303,50 +366,51 @@ class M4bonApp {
         else parts.notation.push(w);
       }
       return parts;
-    });
+    }).filter(e => e !== null);
 
-    const anyH = parsed.some(p => p.hasH);
-    const anyL = parsed.some(p => p.hasL);
+    if (entries.length === 0) return dsl;
 
-    // Compute max widths for each column
+    const anyH = entries.some(e => e.type === 'measure' && e.hasH);
+    const anyL = entries.some(e => e.type === 'measure' && e.hasL);
+
+    // Compute max widths for each column across all measure lines
     let maxNotationW = 0, maxChordW = 0, maxLyricW = 0;
-    for (const p of parsed) {
-      const nw = p.notation.join(' ').length;
-      const cw = p.chords.join(' ').length;
-      const lw = p.lyrics.join(' ').length;
+    for (const e of entries) {
+      if (e.type !== 'measure') continue;
+      const nw = e.notation.join(' ').length;
+      const cw = e.chords.join(' ').length;
+      const lw = e.lyrics.join(' ').length;
       if (nw > maxNotationW) maxNotationW = nw;
       if (cw > maxChordW) maxChordW = cw;
       if (lw > maxLyricW) maxLyricW = lw;
     }
 
-    // Rebuild each measure line
+    // Rebuild each entry in original order
     const out = [];
+    for (const e of entries) {
+      if (e.type === 'comment') {
+        out.push(e.text);
+        continue;
+      }
 
-    if (directives.length > 0) {
-      out.push(directives.join(' '));
-    }
-
-    for (let i = 0; i < parsed.length; i++) {
-      const p = parsed[i];
       let line = '';
 
-      const notStr = p.notation.join(' ');
+      const notStr = e.notation.join(' ');
       line += notStr.padEnd(maxNotationW);
 
       if (anyH) {
         line += ' :H';
-        const chordStr = p.chords.join(' ');
+        const chordStr = e.chords.join(' ');
         line += ' ' + chordStr.padEnd(maxChordW);
       }
 
       if (anyL) {
         line += ' :L';
-        if (p.lyrics.length > 0) {
-          line += ' ' + p.lyrics.join(' ');
+        if (e.lyrics.length > 0) {
+          line += ' ' + e.lyrics.join(' ');
         }
       }
 
-      line += ' |';
       out.push(line);
     }
 
@@ -355,6 +419,20 @@ class M4bonApp {
 
   render() {
     this.parseAndRender();
+  }
+
+  reformatInput() {
+    if (!this.parsedData) return;
+    const pos = this.dslInput.selectionStart;
+    const reformatted = this.reformatColumns(this.dslInput.value);
+    if (reformatted !== this.dslInput.value) {
+      this.dslInput.value = reformatted;
+      this.dsl = reformatted;
+      this.dslInput.selectionStart = Math.min(pos, reformatted.length);
+      this.dslInput.selectionEnd = Math.min(pos, reformatted.length);
+      this.autoResizeTextarea();
+      this.highlightCursorMeasure();
+    }
   }
 
   showError(msg) {
@@ -414,14 +492,13 @@ class M4bonApp {
       const toLoad = [0];  // 0 = piano
       const loadVars = [];
 
-      if (this.metronomeOn) {
-        [76, 77].forEach(n => {
-          const info = this.wafPlayer.loader.drumInfo(n);
-          if (!window[info.variable]) {
-            this.wafPlayer.loader.startLoad(this.audioCtx, info.url, info.variable);
-          }
-        });
-      }
+      // Load metronome drum samples (76=High Wood Block, 77=Low Wood Block)
+      [76, 77].forEach(n => {
+        const info = this.wafPlayer.loader.drumInfo(n);
+        if (!window[info.variable]) {
+          this.wafPlayer.loader.startLoad(this.audioCtx, info.url, info.variable);
+        }
+      });
 
       toLoad.forEach(prog => {
         const varName = '_tone_' + this.pad(prog, 4) + '_GeneralUserGS_sf2_file';
@@ -588,16 +665,14 @@ class M4bonApp {
         startWall += countInSec;
       }
 
-      // Pre-scan: collect note-on events. Use an array per key because
-      // the same pitch on the same channel can appear in overlapping notes.
+      // Pre-scan: collect note-on/note-off pairs into a flat schedule array.
+      // Each entry has absolute wall-clock start/duration for direct scheduling.
+      const scheduledNotes = [];
       const pendingNotes = {}; // key: "ch-pitch" -> [{ tick, velocity }]
-      let lastTick = 0;
 
       for (const ev of events) {
         if (ev.tick < startTick || ev.tick >= endTick) continue;
         if (ev.type === 'metaTempo' || ev.type === 'metaMeter') continue;
-
-        if (ev.tick > lastTick) lastTick = ev.tick;
 
         if (ev.type === 'noteOn') {
           const key = ev.channel + '-' + ev.pitch;
@@ -607,27 +682,42 @@ class M4bonApp {
           const key = ev.channel + '-' + ev.pitch;
           if (pendingNotes[key] && pendingNotes[key].length > 0) {
             const onset = pendingNotes[key].shift();
-            const startTime = startWall + (onset.tick - startTick) * tickToSec;
             let duration = (ev.tick - onset.tick) * tickToSec;
-            // Minimum duration so metronome clicks are audible
             if (duration <= 0) duration = 0.05;
-            this.scheduleNote(ev.channel, ev.pitch, onset.velocity, startTime, duration);
+            scheduledNotes.push({
+              channel: ev.channel,
+              pitch: ev.pitch,
+              velocity: onset.velocity,
+              startTime: startWall + (onset.tick - startTick) * tickToSec,
+              duration: duration
+            });
           }
         }
       }
 
-      // Flush any remaining pending notes with 1s default duration
+      // Flush remaining pending notes
       for (const key in pendingNotes) {
         const list = pendingNotes[key];
         const [ch, pitch] = key.split('-').map(Number);
         for (const onset of list) {
-          const startTime = startWall + (onset.tick - startTick) * tickToSec;
-          this.scheduleNote(ch, pitch, onset.velocity, startTime, 1.0);
+          scheduledNotes.push({
+            channel: ch,
+            pitch: pitch,
+            velocity: onset.velocity,
+            startTime: startWall + (onset.tick - startTick) * tickToSec,
+            duration: 1.0
+          });
         }
       }
 
+      // Sort by startTime (should already be sorted, but ensure it)
+      scheduledNotes.sort((a, b) => a.startTime - b.startTime);
+
       this.isPlaying = true;
       document.getElementById('btn-play').textContent = '⏸';
+
+      // Clear cursor highlight so it doesn't conflict with play-position highlight
+      this.highlightCursorMeasure();
 
       // Start measure highlight tracking
       const rangeOffset = measureStarts[this.startMeasure] || 0;
@@ -643,8 +733,49 @@ class M4bonApp {
         this._recordCountInSec = countInSec;
       }
 
-      const totalSec = (endTick === Infinity ? lastTick : endTick - startTick) * tickToSec + 0.5 + countInSec;
-      this.playbackTimer = setTimeout(() => this.onPlaybackEnd(), totalSec * 1000);
+      if (this.isRecording) {
+        // Recording path: schedule all notes synchronously. MediaRecorder
+        // keeps the AudioContext alive, so we don't need the keep-alive
+        // oscillator. Front-loading all node creation avoids audio glitches
+        // from incremental queueWaveTable calls during capture.
+        for (const n of scheduledNotes) {
+          this.scheduleNote(n.channel, n.pitch, n.velocity, n.startTime, n.duration);
+        }
+
+        // Set a safety timeout as fallback
+        const lastNoteEnd = scheduledNotes.length > 0
+          ? scheduledNotes[scheduledNotes.length - 1].startTime + scheduledNotes[scheduledNotes.length - 1].duration
+          : startWall;
+        const safetySec = (lastNoteEnd - startWall) + 2.0 + countInSec;
+        this.playbackTimer = setTimeout(() => this.onPlaybackEnd(), safetySec * 1000);
+      } else {
+        // Playback-only path: use look-ahead scheduler to adapt to clock
+        // drift. Notes are scheduled incrementally in ~200ms windows.
+        this._scheduledNotes = scheduledNotes;
+        this._schedulerIdx = 0;
+        this._schedulerTimer = null;
+
+        this._scheduleLookAhead();
+
+        // Set a safety timeout as fallback (scheduler handles normal completion)
+        const lastNoteEnd = scheduledNotes.length > 0
+          ? scheduledNotes[scheduledNotes.length - 1].startTime + scheduledNotes[scheduledNotes.length - 1].duration
+          : startWall;
+        const safetySec = (lastNoteEnd - startWall) + 2.0 + countInSec;
+        this.playbackTimer = setTimeout(() => this.onPlaybackEnd(), safetySec * 1000);
+
+        // Keep-alive oscillator prevents Safari from auto-suspending the
+        // AudioContext when notes are scheduled via setTimeout callbacks
+        // rather than directly from the user-gesture handler.
+        if (this.audioCtx) {
+          this._keepAliveOsc = this.audioCtx.createOscillator();
+          this._keepAliveGain = this.audioCtx.createGain();
+          this._keepAliveGain.gain.value = 0;
+          this._keepAliveOsc.connect(this._keepAliveGain);
+          this._keepAliveGain.connect(this.audioCtx.destination);
+          this._keepAliveOsc.start();
+        }
+      }
     } catch (e) {
       this.showError('Playback error: ' + e.message);
       this.isPlaying = false;
@@ -664,7 +795,9 @@ class M4bonApp {
     if (!this.audioCtx || !this.wafPlayer) return;
 
     const key = channel + '-' + pitch;
-    const vol = ((velocity || this.velocity) / 127) * (this.velocity / 127);
+    let vol = ((velocity || this.velocity) / 127) * (this.velocity / 127);
+    // Apply metronome volume to drum channel (metronome clicks)
+    if (channel === 9) vol *= (this.metronomeVol / 100);
 
     let preset;
     if (channel === 9) {
@@ -762,6 +895,12 @@ class M4bonApp {
         clearTimeout(this.playbackTimer);
         this.playbackTimer = null;
       }
+      if (this._schedulerTimer) {
+        clearTimeout(this._schedulerTimer);
+        this._schedulerTimer = null;
+      }
+      this._scheduledNotes = null;
+      this._schedulerIdx = 0;
       this._clearHighlightTimer();
       if (this.midiOutput) {
         for (let ch = 0; ch < 16; ch++) {
@@ -787,15 +926,31 @@ class M4bonApp {
         }
         this._bassNodes = [];
       }
+      // Stop keep-alive oscillator
+      if (this._keepAliveOsc) {
+        try { this._keepAliveOsc.stop(); } catch (e) {}
+        try { this._keepAliveOsc.disconnect(); } catch (e) {}
+        this._keepAliveOsc = null;
+        this._keepAliveGain = null;
+      }
       this.isPlaying = false;
       document.getElementById('btn-play').textContent = '▶';
+      this.highlightCursorMeasure();
     }
   }
 
   onPlaybackEnd() {
+    // Stop keep-alive oscillator
+    if (this._keepAliveOsc) {
+      try { this._keepAliveOsc.stop(); } catch (e) {}
+      try { this._keepAliveOsc.disconnect(); } catch (e) {}
+      this._keepAliveOsc = null;
+      this._keepAliveGain = null;
+    }
     this.isPlaying = false;
     this._clearHighlightTimer();
     document.getElementById('btn-play').textContent = '▶';
+    this.highlightCursorMeasure();
     if (this.isRecording) {
       this.stopRecording();
     }
@@ -826,6 +981,47 @@ class M4bonApp {
     this._lastPlayingIdx = -1;
   }
 
+  _scheduleLookAhead() {
+    if (!this.isPlaying) return;
+    if (!this.audioCtx) return;
+
+    const SCHEDULER_INTERVAL_MS = 50;
+    const LOOK_AHEAD_SEC = 0.200;
+
+    const now = this.audioCtx.currentTime;
+    const windowEnd = now + LOOK_AHEAD_SEC;
+    const notes = this._scheduledNotes;
+    const len = notes.length;
+
+    let scheduled = false;
+    while (this._schedulerIdx < len) {
+      const n = notes[this._schedulerIdx];
+      if (n.startTime < windowEnd) {
+        this.scheduleNote(n.channel, n.pitch, n.velocity, n.startTime, n.duration);
+        this._schedulerIdx++;
+        scheduled = true;
+      } else {
+        break;
+      }
+    }
+
+    if (!scheduled && this._schedulerIdx < len) {
+      const n = notes[this._schedulerIdx];
+      const start = Math.max(n.startTime, now + 0.01);
+      this.scheduleNote(n.channel, n.pitch, n.velocity, start, n.duration);
+      this._schedulerIdx++;
+    }
+
+    if (this._schedulerIdx >= len) {
+      const lastNote = notes[len - 1];
+      const tail = (lastNote.startTime + lastNote.duration) - now + 0.5;
+      this.playbackTimer = setTimeout(() => this.onPlaybackEnd(), Math.max(tail * 1000, 500));
+      return;
+    }
+
+    this._schedulerTimer = setTimeout(() => this._scheduleLookAhead(), SCHEDULER_INTERVAL_MS);
+  }
+
   _scheduleClick(time, isDownbeat) {
     if (!this.audioCtx) return;
     const osc = this.audioCtx.createOscillator();
@@ -833,7 +1029,7 @@ class M4bonApp {
     osc.connect(gain);
     gain.connect(this.masterGain || this.audioCtx.destination);
     osc.frequency.value = isDownbeat ? 1200 : 900;
-    gain.gain.setValueAtTime(0.08, time);
+    gain.gain.setValueAtTime(0.08 * (this.metronomeVol / 100), time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.04);
     osc.start(time);
     osc.stop(time + 0.04);
@@ -1159,6 +1355,13 @@ class M4bonApp {
     });
   }
 
+  downloadExamples() {
+    const a = document.createElement('a');
+    a.href = 'examples.zip';
+    a.download = 'm4bon-examples.zip';
+    a.click();
+  }
+
   // --- State persistence ---
 
   saveState() {
@@ -1166,7 +1369,9 @@ class M4bonApp {
       localStorage.setItem('m4bon-dsl', this.dsl);
       localStorage.setItem('m4bon-bpm', this.bpm);
       localStorage.setItem('m4bon-metronome', this.metronomeOn);
+      localStorage.setItem('m4bon-metroVol', this.metronomeVol);
       localStorage.setItem('m4bon-subscripts', this.showSubscripts);
+      localStorage.setItem('m4bon-comments', this.showComments);
     } catch (e) { /* localStorage unavailable */ }
   }
 
@@ -1180,17 +1385,26 @@ class M4bonApp {
       }
       this.bpm = parseInt(localStorage.getItem('m4bon-bpm')) || 120;
       this.metronomeOn = localStorage.getItem('m4bon-metronome') !== 'false';
+      this.metronomeVol = parseInt(localStorage.getItem('m4bon-metroVol')) || 50;
       this.showSubscripts = localStorage.getItem('m4bon-subscripts') !== 'false';
+      this.showComments = localStorage.getItem('m4bon-comments') !== 'false';
     } catch (e) { /* ignore */ }
     this.tempoDisplay.textContent = this.bpm;
     this.chkMetronome.checked = this.metronomeOn;
     this.chkSubscripts.checked = this.showSubscripts;
+    this.chkComments.checked = this.showComments;
   }
 
   // --- Keyboard shortcuts ---
 
   onKeyDown(e) {
+    // Allow textarea typing to work normally, except Esc and Ctrl/Cmd+S
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        this.reformatInput();
+        return;
+      }
       if (e.key !== 'Escape') return;
     }
 
@@ -1213,6 +1427,8 @@ class M4bonApp {
         this.chkMetronome.checked = this.metronomeOn; break;
       case 'o': this.showSubscripts = !this.showSubscripts;
         this.chkSubscripts.checked = this.showSubscripts; this.updateMeasures(); break;
+      case 'c': this.showComments = !this.showComments;
+        this.chkComments.checked = this.showComments; this.updateMeasures(); break;
     }
   }
 }
