@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/mellis/m4bon/frac"
@@ -99,8 +100,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 					NumSlots:        len(group.Slots),
 				}
 				if pe.Pitches != nil {
-					ev.Pitches = make([]Pitch, len(pe.Pitches))
-					copy(ev.Pitches, pe.Pitches)
+					ev.Pitches = slices.Clone(pe.Pitches)
 				}
 				events = append(events, ev)
 				voiceLastIdx[1] = len(events) - 1
@@ -110,13 +110,13 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 				last := &events[len(events)-1]
 				last.Duration.Num = last.Duration.Num*sdDen + sdNum*last.Duration.Den
 				last.Duration.Den = last.Duration.Den * sdDen
-				gv := gcd(last.Duration.Num, last.Duration.Den)
+				gv := frac.GCD(last.Duration.Num, last.Duration.Den)
 				last.Duration.Num /= gv
 				last.Duration.Den /= gv
 				if last.Nominal != nil {
 					last.Nominal.Num = last.Nominal.Num*sdDen + sdNum*last.Nominal.Den
 					last.Nominal.Den = last.Nominal.Den * sdDen
-					ng2 := gcd(last.Nominal.Num, last.Nominal.Den)
+					ng2 := frac.GCD(last.Nominal.Num, last.Nominal.Den)
 					last.Nominal.Num /= ng2
 					last.Nominal.Den /= ng2
 				}
@@ -136,21 +136,21 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 
 		perNoteNum := totalNum
 		perNoteDen := totalDen * posCount
-		needsTuplet := !isStandardDuration(perNoteNum, perNoteDen)
+		needsTuplet := !frac.IsStandardDuration(perNoteNum, perNoteDen)
 
 		var nomNum, nomDen int
 		var ratioNum, ratioDen int
 
 		if needsTuplet {
 			ratioNum = activeCount
-			ratioDen = lowerPowerOf2(activeCount)
+			ratioDen = frac.LowerPowerOf2(activeCount)
 			nomNum = totalNum
 			nomDen = totalDen * ratioDen
-			ng := gcd(nomNum, nomDen)
+			ng := frac.GCD(nomNum, nomDen)
 			nomNum /= ng
 			nomDen /= ng
 
-			tg := gcd(totalNum, totalDen)
+			tg := frac.GCD(totalNum, totalDen)
 			events = append(events, NewTupletStartEvent(
 				Fraction{Num: totalNum / tg, Den: totalDen / tg},
 				gi, ratioNum, ratioDen,
@@ -193,8 +193,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 						GroupIdx:        gi,
 					}
 					if pe.Pitches != nil {
-						ev.Pitches = make([]Pitch, len(pe.Pitches))
-						copy(ev.Pitches, pe.Pitches)
+						ev.Pitches = slices.Clone(pe.Pitches)
 					}
 					events = append(events, ev)
 					voiceLastIdx[1] = len(events) - 1
@@ -205,13 +204,13 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 					}
 					last.Duration.Num = last.Duration.Num*posDen + posNum*last.Duration.Den
 					last.Duration.Den = last.Duration.Den * posDen
-					gVal := gcd(last.Duration.Num, last.Duration.Den)
+					gVal := frac.GCD(last.Duration.Num, last.Duration.Den)
 					last.Duration.Num /= gVal
 					last.Duration.Den /= gVal
 					if last.Nominal != nil {
 						last.Nominal.Num = last.Nominal.Num*posDen + posNum*last.Nominal.Den
 						last.Nominal.Den = last.Nominal.Den * posDen
-						ng2 := gcd(last.Nominal.Num, last.Nominal.Den)
+						ng2 := frac.GCD(last.Nominal.Num, last.Nominal.Den)
 						last.Nominal.Num /= ng2
 						last.Nominal.Den /= ng2
 					}
@@ -252,8 +251,7 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 									NumSlots:        1,
 								}
 								if pe.Pitches != nil {
-									ev.Pitches = make([]Pitch, len(pe.Pitches))
-									copy(ev.Pitches, pe.Pitches)
+									ev.Pitches = slices.Clone(pe.Pitches)
 								}
 								events = append(events, ev)
 								voiceLastIdx[voice] = len(events) - 1
@@ -269,13 +267,13 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 						}
 						last.Duration.Num = last.Duration.Num*posDen + posNum*last.Duration.Den
 						last.Duration.Den = last.Duration.Den * posDen
-						gVal := gcd(last.Duration.Num, last.Duration.Den)
+						gVal := frac.GCD(last.Duration.Num, last.Duration.Den)
 						last.Duration.Num /= gVal
 						last.Duration.Den /= gVal
 						if last.Nominal != nil {
 							last.Nominal.Num = last.Nominal.Num*posDen + posNum*last.Nominal.Den
 							last.Nominal.Den = last.Nominal.Den * posDen
-							ng2 := gcd(last.Nominal.Num, last.Nominal.Den)
+							ng2 := frac.GCD(last.Nominal.Num, last.Nominal.Den)
 							last.Nominal.Num /= ng2
 							last.Nominal.Den /= ng2
 						}
@@ -348,7 +346,7 @@ func splitAtBarline(events []Event, timeNum, timeDen int) []Event {
 			// Advance position
 			pNum = pNum*ev.Duration.Den + ev.Duration.Num*pDen
 			pDen = pDen * ev.Duration.Den
-			g := gcd(pNum, pDen)
+			g := frac.GCD(pNum, pDen)
 			pNum /= g
 			pDen /= g
 			continue
@@ -370,7 +368,7 @@ func splitAtBarline(events []Event, timeNum, timeDen int) []Event {
 			result = append(result, ev)
 			pNum = pNum*dDen + dNum*pDen
 			pDen = pDen * dDen
-			g := gcd(pNum, pDen)
+			g := frac.GCD(pNum, pDen)
 			pNum /= g
 			pDen /= g
 			continue
@@ -381,7 +379,7 @@ func splitAtBarline(events []Event, timeNum, timeDen int) []Event {
 		//       = (bNum*pDen - pNum*bDen) / (bDen*pDen)
 		beforeNum := bNum*pDen - pNum*bDen
 		beforeDen := bDen * pDen
-		g1 := gcd(beforeNum, beforeDen)
+		g1 := frac.GCD(beforeNum, beforeDen)
 		beforeNum /= g1
 		beforeDen /= g1
 
@@ -389,7 +387,7 @@ func splitAtBarline(events []Event, timeNum, timeDen int) []Event {
 		//      = (dNum*beforeDen - beforeNum*dDen) / (dDen*beforeDen)
 		afterNum := dNum*beforeDen - beforeNum*dDen
 		afterDen := dDen * beforeDen
-		g2 := gcd(afterNum, afterDen)
+		g2 := frac.GCD(afterNum, afterDen)
 		afterNum /= g2
 		afterDen /= g2
 
@@ -399,12 +397,10 @@ func splitAtBarline(events []Event, timeNum, timeDen int) []Event {
 
 		ev2 := ev
 		if ev.Pitches != nil {
-			ev2.Pitches = make([]Pitch, len(ev.Pitches))
-			copy(ev2.Pitches, ev.Pitches)
+			ev2.Pitches = slices.Clone(ev.Pitches)
 		}
 		if ev.Midis != nil {
-			ev2.Midis = make([]int, len(ev.Midis))
-			copy(ev2.Midis, ev.Midis)
+			ev2.Midis = slices.Clone(ev.Midis)
 		}
 		ev2.Duration = Fraction{Num: afterNum, Den: afterDen}
 		ev2.Split = true
@@ -414,7 +410,7 @@ func splitAtBarline(events []Event, timeNum, timeDen int) []Event {
 		// Advance past ev2
 		pNum = pNum*dDen + dNum*pDen
 		pDen = pDen * dDen
-		g := gcd(pNum, pDen)
+		g := frac.GCD(pNum, pDen)
 		pNum /= g
 		pDen /= g
 	}
@@ -428,19 +424,6 @@ var standardDurations = []Fraction{
 	{Num: 1, Den: 2}, {Num: 1, Den: 4}, {Num: 1, Den: 8}, {Num: 1, Den: 16}, {Num: 1, Den: 32}, {Num: 1, Den: 64}, {Num: 1, Den: 128},
 }
 
-// lessThanFraction returns true if a < b using cross-multiplication (no float).
-func lessThanFraction(a, b Fraction) bool {
-	return a.Num*b.Den < b.Num*a.Den
-}
-
-// subtractFraction returns a - b reduced to lowest terms. Assumes a >= b.
-func subtractFraction(a, b Fraction) Fraction {
-	num := a.Num*b.Den - b.Num*a.Den
-	den := a.Den * b.Den
-	g := gcd(num, den)
-	return Fraction{Num: num / g, Den: den / g}
-}
-
 func splitNonStandardDurations(events []Event) []Event {
 	var result []Event
 	for _, ev := range events {
@@ -452,7 +435,7 @@ func splitNonStandardDurations(events []Event) []Event {
 		if ev.Nominal != nil {
 			dur = *ev.Nominal
 		}
-		if isStandardDuration(dur.Num, dur.Den) {
+		if frac.IsStandardDuration(dur.Num, dur.Den) {
 			result = append(result, ev)
 			continue
 		}
@@ -462,7 +445,7 @@ func splitNonStandardDurations(events []Event) []Event {
 		for remains.Num > 0 {
 			matched := false
 			for _, sd := range standardDurations {
-				if !lessThanFraction(remains, sd) { // remains >= sd
+				if !remains.LessThan(sd) { // remains >= sd
 					ne := ev
 					ne.Duration = sd
 					if ev.Nominal != nil {
@@ -470,7 +453,7 @@ func splitNonStandardDurations(events []Event) []Event {
 					}
 					ne.Split = !first
 					result = append(result, ne)
-					remains = subtractFraction(remains, sd)
+					remains = remains.Sub(sd)
 					first = false
 					matched = true
 					break
@@ -921,10 +904,8 @@ func resolveOctavesMeasures(measures []MeasureResult) {
 						}
 					}
 					if len(prev.Midis) == len(ev.Pitches) {
-						ev.Midis = make([]int, len(prev.Midis))
-						copy(ev.Midis, prev.Midis)
-						ev.ResolvedOctaves = make([]int, len(prev.ResolvedOctaves))
-						copy(ev.ResolvedOctaves, prev.ResolvedOctaves)
+						ev.Midis = slices.Clone(prev.Midis)
+						ev.ResolvedOctaves = slices.Clone(prev.ResolvedOctaves)
 						continue
 					}
 				}
@@ -1066,7 +1047,7 @@ func ParseDSLWithComments(lines []string, comments map[int][]string) DSLResult {
 			actualTicks := totalTicks(events)
 			expectedTicks := timeSigTicks(effectiveTimeNum, effectiveTimeDen)
 			if actualTicks != expectedTicks && actualTicks > 0 {
-				g := gcd(actualTicks, frac.TicksPerWholeNote)
+				g := frac.GCD(actualTicks, frac.TicksPerWholeNote)
 				effectiveTimeNum = actualTicks / g
 				effectiveTimeDen = frac.TicksPerWholeNote / g
 			}
