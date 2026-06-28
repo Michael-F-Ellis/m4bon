@@ -265,21 +265,16 @@ input[type="checkbox"] {
 }
 
 .m4bon-chord-col {
-  display: table-cell;
   color: var(--muted);
-  padding-right: 1.5em;
-  white-space: nowrap;
+  white-space: pre;
 }
 
 .m4bon-note-col {
-  display: table-cell;
-  padding-right: 1.5em;
-  white-space: nowrap;
+  white-space: pre;
 }
 
 .m4bon-lyric-col {
-  display: table-cell;
-  white-space: nowrap;
+  white-space: pre;
 }
 
 /* Scrollbar styling */
