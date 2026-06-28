@@ -49,19 +49,11 @@ func FormatHTML(measures []CellSeq, asciiLeaps bool) string {
 }
 
 // FormatHTMLRows converts MeasureRows into an HTML string with
-// three-column CSS table layout for cross-measure alignment.
+// three-column layout for cross-measure alignment, using flexbox
+// and explicit column widths so comment lines don't affect spacing.
 func FormatHTMLRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int, asciiLeaps bool) string {
 	var b strings.Builder
-	b.WriteString(`<div class="m4bon-measure-table">`)
-	b.WriteString(`<div class="m4bon-header-row">`)
-	if maxChordW > 0 {
-		b.WriteString(`<span class="m4bon-chord-col"></span>`)
-	}
-	b.WriteString(`<span class="m4bon-note-col"></span>`)
-	if maxLyricW > 0 {
-		b.WriteString(`<span class="m4bon-lyric-col"></span>`)
-	}
-	b.WriteString("</div>")
+	b.WriteString(`<div class="m4bon-measures-list">`)
 
 	for _, row := range rows {
 		// Render comment block before measure
@@ -74,14 +66,14 @@ func FormatHTMLRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int, ascii
 		b.WriteString(`<div class="m4bon-measure">`)
 
 		if maxChordW > 0 {
-			b.WriteString(`<span class="m4bon-chord-col">`)
+			b.WriteString(fmt.Sprintf(`<span class="m4bon-chord-col" style="min-width:%dch">`, maxChordW))
 			for _, c := range row.ChordCells {
 				b.WriteString(cellToHTML(c, asciiLeaps))
 			}
 			b.WriteString("</span>")
 		}
 
-		b.WriteString(`<span class="m4bon-note-col">`)
+		b.WriteString(fmt.Sprintf(`<span class="m4bon-note-col" style="min-width:%dch">`, maxNoteW))
 		noteCells := row.NoteCells
 		if len(noteCells) > 0 && strings.HasSuffix(noteCells[0].Content, ":  ") {
 			b.WriteString(`<span class="m4bon-measure-num">`)
@@ -95,7 +87,7 @@ func FormatHTMLRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int, ascii
 		b.WriteString("</span>")
 
 		if maxLyricW > 0 {
-			b.WriteString(`<span class="m4bon-lyric-col">`)
+			b.WriteString(fmt.Sprintf(`<span class="m4bon-lyric-col" style="min-width:%dch">`, maxLyricW))
 			for _, c := range row.LyricCells {
 				b.WriteString(cellToHTML(c, asciiLeaps))
 			}

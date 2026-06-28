@@ -123,7 +123,7 @@ func TestFormatHTMLRows_Basic(t *testing.T) {
 	rows, maxCW, maxNW, maxLW := BuildRows(result.Measures, true, false)
 	html := FormatHTMLRows(rows, maxCW, maxNW, maxLW, false)
 
-	if !strings.Contains(html, `<span class="m4bon-note-col">`) {
+	if !strings.Contains(html, `<span class="m4bon-note-col"`) {
 		t.Error("expected note-col span")
 	}
 	if strings.Contains(html, "m4bon-chord-col") {
@@ -136,7 +136,7 @@ func TestFormatHTMLRows_WithChords(t *testing.T) {
 	rows, maxCW, maxNW, maxLW := BuildRows(result.Measures, true, false)
 	html := FormatHTMLRows(rows, maxCW, maxNW, maxLW, false)
 
-	if !strings.Contains(html, `<span class="m4bon-chord-col">`) {
+	if !strings.Contains(html, `<span class="m4bon-chord-col"`) {
 		t.Error("expected chord-col span")
 	}
 }

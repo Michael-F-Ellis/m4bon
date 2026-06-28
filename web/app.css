@@ -210,22 +210,24 @@ input[type="checkbox"] {
   text-decoration-color: var(--accent);
 }
 
-.m4bon-measure-table {
-  display: table;
-  border-collapse: collapse;
-}
-
-.m4bon-header-row {
-  display: table-row;
-  height: 0; /* hidden row to establish column widths */
-  visibility: hidden;
+.m4bon-measures-list {
+  display: flex;
+  flex-direction: column;
 }
 
 .m4bon-measure {
-  display: table-row;
+  display: flex;
+  flex-direction: row;
+  gap: 4ch;
   font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
   font-size: 18px;
   line-height: 1.8;
+}
+
+.m4bon-chord-col,
+.m4bon-note-col,
+.m4bon-lyric-col {
+  white-space: pre;
 }
 
 .m4bon-measure.active {
