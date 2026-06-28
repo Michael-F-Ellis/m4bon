@@ -148,6 +148,7 @@ class M4bonApp {
     document.getElementById('btn-save-mxl').addEventListener('click', () => this.saveMXL());
     document.getElementById('btn-save-dsl').addEventListener('click', () => this.saveDSL());
     document.getElementById('btn-copy').addEventListener('click', () => this.copyDSL());
+    document.getElementById('btn-examples').addEventListener('click', () => this.downloadExamples());
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     window.addEventListener('resize', () => this.autoResizeTextarea());
@@ -483,14 +484,13 @@ class M4bonApp {
       const toLoad = [0];  // 0 = piano
       const loadVars = [];
 
-      if (this.metronomeOn) {
-        [76, 77].forEach(n => {
-          const info = this.wafPlayer.loader.drumInfo(n);
-          if (!window[info.variable]) {
-            this.wafPlayer.loader.startLoad(this.audioCtx, info.url, info.variable);
-          }
-        });
-      }
+      // Load metronome drum samples (76=High Wood Block, 77=Low Wood Block)
+      [76, 77].forEach(n => {
+        const info = this.wafPlayer.loader.drumInfo(n);
+        if (!window[info.variable]) {
+          this.wafPlayer.loader.startLoad(this.audioCtx, info.url, info.variable);
+        }
+      });
 
       toLoad.forEach(prog => {
         const varName = '_tone_' + this.pad(prog, 4) + '_GeneralUserGS_sf2_file';
@@ -1343,6 +1343,13 @@ class M4bonApp {
     navigator.clipboard.writeText(this.dsl).then(() => {
       this.statusText.textContent = 'DSL copied to clipboard';
     });
+  }
+
+  downloadExamples() {
+    const a = document.createElement('a');
+    a.href = 'examples.zip';
+    a.download = 'm4bon-examples.zip';
+    a.click();
   }
 
   // --- State persistence ---

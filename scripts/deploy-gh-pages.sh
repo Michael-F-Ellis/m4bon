@@ -20,7 +20,17 @@ FILES=(
   bass-Cs2.ogg
   bass-E1.ogg
   bass-G1.ogg
+  examples.zip
 )
+
+# Create examples.zip from the examples/ directory
+EXAMPLES_DIR="examples"
+if [ -d "$EXAMPLES_DIR" ]; then
+  echo "Creating examples.zip..."
+  (cd "$EXAMPLES_DIR" && zip -r "../$WEB_DIR/examples.zip" .)
+else
+  echo "WARNING: $EXAMPLES_DIR/ not found — skipping examples.zip"
+fi
 
 # Verify all files exist
 for f in "${FILES[@]}"; do
@@ -40,6 +50,11 @@ trap cleanup EXIT
 for f in "${FILES[@]}"; do
   cp "$WEB_DIR/$f" "$STAGING/"
 done
+
+# Also copy the examples directory to staging for gh-pages deployment
+if [ -d "$EXAMPLES_DIR" ]; then
+  cp -r "$EXAMPLES_DIR" "$STAGING/"
+fi
 
 # Save current branch so we can return
 CURRENT_BRANCH=$(git branch --show-current)
@@ -74,6 +89,12 @@ for f in "${FILES[@]}"; do
   cp "$STAGING/$f" .
   git add "$f"
 done
+
+# Copy examples directory for individual file browsing
+if [ -d "$STAGING/examples" ]; then
+  cp -r "$STAGING/examples" .
+  git add examples/
+fi
 
 # Commit
 if git diff-index --quiet --cached HEAD -- 2>/dev/null; then
