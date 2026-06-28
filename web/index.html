@@ -41,7 +41,7 @@
       </div>
       <div class="transport-group">
         <label>Volume</label>
-        <input type="range" id="volume-slider" min="0" max="127" value="90">
+        <input type="range" id="volume-slider" min="0" max="127" value="45">
       </div>
       <div class="transport-group">
         <label>Measures</label>
@@ -54,6 +54,7 @@
       <div class="transport-group">
         <label>
           <input type="checkbox" id="chk-metronome" checked> Metro
+          <input type="range" id="metro-volume" min="0" max="100" value="50" style="width:60px;vertical-align:middle">
         </label>
         <label>
           <input type="checkbox" id="chk-subscripts" checked> Subs
@@ -85,6 +86,6 @@
 
   <script src="wasm_exec.js"></script>
   <script src="WebAudioFontPlayer.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>

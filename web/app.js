@@ -42,7 +42,8 @@ class M4bonApp {
     this.metronomeOn = true;
     this.rootsOn = false;
     this.backbeatsOn = false;
-    this.velocity = 90;
+    this.velocity = 45;
+    this.metronomeVol = 50; // 0-100: metronome click volume relative to playback
     this.isPlaying = false;
     this.isRecording = false;
     this.parsedData = null;
@@ -94,6 +95,7 @@ class M4bonApp {
     this.rangeDisplay = document.getElementById('range-display');
     this.volumeSlider = document.getElementById('volume-slider');
     this.chkMetronome = document.getElementById('chk-metronome');
+    this.metroVolSlider = document.getElementById('metro-volume');
     this.chkSubscripts = document.getElementById('chk-subscripts');
     this.chkComments = document.getElementById('chk-comments');
     this.chkRoots = document.getElementById('chk-roots');
@@ -125,6 +127,14 @@ class M4bonApp {
 
     this.chkMetronome.addEventListener('change', () => {
       this.metronomeOn = this.chkMetronome.checked;
+    });
+    this.metroVolSlider.addEventListener('input', () => {
+      this.metronomeVol = parseInt(this.metroVolSlider.value);
+      if (this.metronomeOn && !this.isPlaying) {
+        // Play a test click so user can hear the level
+        if (this.audioCtx && this.audioCtx.state === 'suspended') this.audioCtx.resume();
+        this._scheduleClick(this.audioCtx ? this.audioCtx.currentTime + 0.05 : performance.now() / 1000 + 0.05, true);
+      }
     });
     this.chkSubscripts.addEventListener('change', () => {
       this.showSubscripts = this.chkSubscripts.checked;
@@ -232,26 +242,39 @@ class M4bonApp {
   }
 
   highlightMeasures() {
-    const divs = this.measuresEl.querySelectorAll('.m4bon-measure');
-    const total = divs.length;
+    const measureEls = this.measuresEl.querySelectorAll('.m4bon-measure');
+    const total = measureEls.length;
     if (total === 0) return;
 
-    divs.forEach(d => {
-      d.classList.remove('m4bon-start', 'm4bon-end', 'm4bon-playing');
-    });
+    // Target all rendered elements so the green line spans comments too.
+    const allEls = this.measuresEl.querySelectorAll('.m4bon-measure, .m4bon-comment-line');
+    allEls.forEach(d => d.classList.remove('m4bon-start', 'm4bon-playing'));
 
-    if (this.startMeasure > 0 && this.startMeasure < total) {
-      divs[this.startMeasure].classList.add('m4bon-start');
-    }
+    const rangeStart = this.startMeasure;
+    const rangeEnd = this.endMeasure > 0 ? this.endMeasure : total;
 
-    if (this.endMeasure > 0 && this.endMeasure <= total) {
-      divs[this.endMeasure - 1].classList.add('m4bon-end');
+    // Only show the range line when a sub-range is selected.
+    if (rangeStart > 0 || rangeEnd < total) {
+      const measureArray = Array.from(measureEls);
+      const startEl = measureArray[rangeStart];
+      const endEl = measureArray[rangeEnd - 1];
+
+      if (startEl && endEl) {
+        let marking = false;
+        for (const el of allEls) {
+          if (el === startEl) marking = true;
+          if (marking) {
+            el.classList.add('m4bon-start');
+          }
+          if (el === endEl) break;
+        }
+      }
     }
   }
 
   highlightCursorMeasure() {
-    const divs = this.measuresEl.querySelectorAll('.m4bon-measure');
-    divs.forEach(d => d.classList.remove('m4bon-cursor'));
+    const allElements = this.measuresEl.querySelectorAll('.m4bon-measure, .m4bon-comment-line');
+    allElements.forEach(d => d.classList.remove('m4bon-cursor'));
 
     // Suppress cursor highlight during playback or recording to avoid
     // conflicting with the moving measure-position highlight.
@@ -259,11 +282,47 @@ class M4bonApp {
 
     const pos = this.dslInput.selectionStart;
     const textBefore = this.dslInput.value.substring(0, pos);
-    const measureIdx = (textBefore.match(/\n/g) || []).length;
+    const lineIdx = (textBefore.match(/\n/g) || []).length;
 
-    if (measureIdx < divs.length) {
-      divs[measureIdx].classList.add('m4bon-cursor');
-      divs[measureIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const lines = this.dslInput.value.split('\n');
+    const trimmed = lines[lineIdx].trim();
+    if (!trimmed) return; // blank line — nothing to highlight
+
+    // If cursor is on a comment and comments are hidden, skip forward
+    // to the next measure line so something still highlights.
+    let targetLine = lineIdx;
+    if (!this.showComments && trimmed.startsWith('!')) {
+      for (let j = lineIdx + 1; j < lines.length; j++) {
+        const t = lines[j].trim();
+        if (t && !t.startsWith('!')) {
+          targetLine = j;
+          break;
+        }
+      }
+      if (targetLine === lineIdx) return; // no measure found after cursor
+    }
+
+    // Count rendered elements (measures + visible comment blocks) before targetLine.
+    // Consecutive ! lines form a single comment block, rendered as one element.
+    let renderedIdx = 0;
+    let inCommentBlock = false;
+    for (let i = 0; i < targetLine; i++) {
+      const t = lines[i].trim();
+      if (!t) continue;
+      if (t.startsWith('!')) {
+        if (!inCommentBlock) {
+          if (this.showComments) renderedIdx++;
+          inCommentBlock = true;
+        }
+      } else {
+        inCommentBlock = false;
+        renderedIdx++;
+      }
+    }
+
+    if (renderedIdx < allElements.length) {
+      allElements[renderedIdx].classList.add('m4bon-cursor');
+      allElements[renderedIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }
 
@@ -284,59 +343,20 @@ class M4bonApp {
   // --- Auto-reformat on successful parse ---
 
   reformatColumns(dsl) {
-    // Split raw DSL into measure lines, preserving comment lines
+    // Split raw DSL into lines, trimming each.
+    // Never re-order or split lines — each line stays at its original position.
     const rawLines = dsl.split('\n').map(l => l.trim());
     if (rawLines.length === 0) return dsl;
 
-    // Separate comments from measure lines, tracking their positions.
-    // Each comment line is preserved separately (no concatenation).
-    const commentMap = new Map(); // line index in output → array of comment lines
-    const measureLines = [];
-
-    for (let i = 0; i < rawLines.length; i++) {
-      const l = rawLines[i];
-      if (!l) continue;
-      if (l.startsWith('!')) {
-        const body = l.slice(1).trim();
-        if (body) {
-          if (!commentMap.has(measureLines.length)) {
-            commentMap.set(measureLines.length, []);
-          }
-          commentMap.get(measureLines.length).push(body);
-        }
-        continue;
-      }
-      measureLines.push(l);
-    }
-
-    // Extract global directives from the first measure line (K, M, T, L at start)
-    const firstTokens = measureLines[0].split(/\s+/);
-    const directives = [];
-    let fi = 0;
-    while (fi < firstTokens.length && /^[MKTL]\d/i.test(firstTokens[fi])) {
-      directives.push(firstTokens[fi]);
-      fi++;
-    }
-
-    // Build measure line slices: first line may continue with notation after directives
-    let measuresToParse;
-    if (fi > 0) {
-      measuresToParse = [];
-      const rem = firstTokens.slice(fi).join(' ');
-      if (rem) measuresToParse.push(rem);
-      for (let j = 1; j < measureLines.length; j++) measuresToParse.push(measureLines[j]);
-    } else {
-      measuresToParse = measureLines.slice();
-    }
-
-    if (measuresToParse.length === 0) return dsl;
-
-    // Parse each measure into { notation, chords, lyrics } triples
+    // Parse each line. Comment lines (! ...) stay as raw text;
+    // measure lines are split into { notation, chords, lyrics } triples.
     // Following the parser's extractDirectivesTail state machine: L→R,
     // state 0=notation, 1=chords(seen :H), 2=lyrics(seen :L)
-    const parsed = measuresToParse.map(m => {
-      const words = m.split(/\s+/);
-      const parts = { notation: [], chords: [], lyrics: [], hasH: false, hasL: false };
+    const entries = rawLines.map(l => {
+      if (!l) return null;
+      if (l.startsWith('!')) return { type: 'comment', text: l };
+      const words = l.split(/\s+/);
+      const parts = { type: 'measure', notation: [], chords: [], lyrics: [], hasH: false, hasL: false };
       let state = 0;
       for (const w of words) {
         if (w === ':H' || w === ':h') { state = 1; parts.hasH = true; continue; }
@@ -346,64 +366,52 @@ class M4bonApp {
         else parts.notation.push(w);
       }
       return parts;
-    });
+    }).filter(e => e !== null);
 
-    const anyH = parsed.some(p => p.hasH);
-    const anyL = parsed.some(p => p.hasL);
+    if (entries.length === 0) return dsl;
 
-    // Compute max widths for each column
+    const anyH = entries.some(e => e.type === 'measure' && e.hasH);
+    const anyL = entries.some(e => e.type === 'measure' && e.hasL);
+
+    // Compute max widths for each column across all measure lines
     let maxNotationW = 0, maxChordW = 0, maxLyricW = 0;
-    for (const p of parsed) {
-      const nw = p.notation.join(' ').length;
-      const cw = p.chords.join(' ').length;
-      const lw = p.lyrics.join(' ').length;
+    for (const e of entries) {
+      if (e.type !== 'measure') continue;
+      const nw = e.notation.join(' ').length;
+      const cw = e.chords.join(' ').length;
+      const lw = e.lyrics.join(' ').length;
       if (nw > maxNotationW) maxNotationW = nw;
       if (cw > maxChordW) maxChordW = cw;
       if (lw > maxLyricW) maxLyricW = lw;
     }
 
-    // Rebuild each measure line
+    // Rebuild each entry in original order
     const out = [];
-
-    if (directives.length > 0) {
-      out.push(directives.join(' '));
-    }
-
-    for (let i = 0; i < parsed.length; i++) {
-      // Reinsert comment lines before this measure if any exist
-      if (commentMap.has(i)) {
-        for (const cl of commentMap.get(i)) {
-          out.push('! ' + cl);
-        }
+    for (const e of entries) {
+      if (e.type === 'comment') {
+        out.push(e.text);
+        continue;
       }
 
-      const p = parsed[i];
       let line = '';
 
-      const notStr = p.notation.join(' ');
+      const notStr = e.notation.join(' ');
       line += notStr.padEnd(maxNotationW);
 
       if (anyH) {
         line += ' :H';
-        const chordStr = p.chords.join(' ');
+        const chordStr = e.chords.join(' ');
         line += ' ' + chordStr.padEnd(maxChordW);
       }
 
       if (anyL) {
         line += ' :L';
-        if (p.lyrics.length > 0) {
-          line += ' ' + p.lyrics.join(' ');
+        if (e.lyrics.length > 0) {
+          line += ' ' + e.lyrics.join(' ');
         }
       }
 
       out.push(line);
-    }
-
-    // Append trailing comment lines after last measure if any exist
-    if (commentMap.has(parsed.length)) {
-      for (const cl of commentMap.get(parsed.length)) {
-        out.push('! ' + cl);
-      }
     }
 
     return out.join('\n');
@@ -787,7 +795,9 @@ class M4bonApp {
     if (!this.audioCtx || !this.wafPlayer) return;
 
     const key = channel + '-' + pitch;
-    const vol = ((velocity || this.velocity) / 127) * (this.velocity / 127);
+    let vol = ((velocity || this.velocity) / 127) * (this.velocity / 127);
+    // Apply metronome volume to drum channel (metronome clicks)
+    if (channel === 9) vol *= (this.metronomeVol / 100);
 
     let preset;
     if (channel === 9) {
@@ -1019,7 +1029,7 @@ class M4bonApp {
     osc.connect(gain);
     gain.connect(this.masterGain || this.audioCtx.destination);
     osc.frequency.value = isDownbeat ? 1200 : 900;
-    gain.gain.setValueAtTime(0.08, time);
+    gain.gain.setValueAtTime(0.08 * (this.metronomeVol / 100), time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.04);
     osc.start(time);
     osc.stop(time + 0.04);
@@ -1359,6 +1369,7 @@ class M4bonApp {
       localStorage.setItem('m4bon-dsl', this.dsl);
       localStorage.setItem('m4bon-bpm', this.bpm);
       localStorage.setItem('m4bon-metronome', this.metronomeOn);
+      localStorage.setItem('m4bon-metroVol', this.metronomeVol);
       localStorage.setItem('m4bon-subscripts', this.showSubscripts);
       localStorage.setItem('m4bon-comments', this.showComments);
     } catch (e) { /* localStorage unavailable */ }
@@ -1374,6 +1385,7 @@ class M4bonApp {
       }
       this.bpm = parseInt(localStorage.getItem('m4bon-bpm')) || 120;
       this.metronomeOn = localStorage.getItem('m4bon-metronome') !== 'false';
+      this.metronomeVol = parseInt(localStorage.getItem('m4bon-metroVol')) || 50;
       this.showSubscripts = localStorage.getItem('m4bon-subscripts') !== 'false';
       this.showComments = localStorage.getItem('m4bon-comments') !== 'false';
     } catch (e) { /* ignore */ }

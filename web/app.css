@@ -232,16 +232,11 @@ input[type="checkbox"] {
   background: var(--surface);
 }
 
-/* Start measure indicator: green left border */
-.m4bon-measure.m4bon-start {
+/* Selection range indicator: green left border on all elements
+   (measures + comment lines) from first to last selected measure. */
+.m4bon-start {
   border-left: 3px solid var(--green);
   padding-left: 5px;
-}
-
-/* End measure indicator: grey right border */
-.m4bon-measure.m4bon-end {
-  border-right: 3px solid var(--muted);
-  padding-right: 5px;
 }
 
 /* Currently playing measure: subtle darken */
@@ -253,6 +248,12 @@ input[type="checkbox"] {
 /* Cursor-linked measure highlight */
 .m4bon-measure.m4bon-cursor {
   background: rgba(137, 180, 250, 0.12);
+  border-left: 3px solid var(--accent);
+  padding-left: 5px;
+}
+
+.m4bon-comment-line.m4bon-cursor {
+  background: rgba(137, 180, 250, 0.08);
   border-left: 3px solid var(--accent);
   padding-left: 5px;
 }
