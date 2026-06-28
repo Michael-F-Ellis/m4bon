@@ -11,6 +11,136 @@ import (
 
 // --- Duration resolution ---
 
+// VoiceState tracks per-voice event state across and within measures for
+// sustain resolution and tie continuity.
+type VoiceState struct {
+	lastIdx map[int]int    // voice → index in current measure's events slice
+	prior   map[int]*Event // voice → last event from previous measure (nil = voice had a rest)
+}
+
+func newVoiceState(prior map[int]*Event) *VoiceState {
+	return &VoiceState{
+		lastIdx: make(map[int]int),
+		prior:   prior,
+	}
+}
+
+// LastEvent returns the most recent event for the given voice, searching
+// within the current measure first, then falling back to the prior measure.
+// Returns nil if the voice has never been established.
+func (vs *VoiceState) LastEvent(voice int, events []Event) *Event {
+	if idx, ok := vs.lastIdx[voice]; ok {
+		return &events[idx]
+	}
+	if vs.prior != nil {
+		return vs.prior[voice]
+	}
+	return nil
+}
+
+// HasPriorVoice returns true if the voice existed in the prior measure
+// (even if it was a rest/nil sentinel).
+func (vs *VoiceState) HasPriorVoice(voice int) bool {
+	if vs.prior == nil {
+		return false
+	}
+	_, ok := vs.prior[voice]
+	return ok
+}
+
+// Record saves the given event index as the latest for its voice.
+func (vs *VoiceState) Record(voice int, idx int) {
+	vs.lastIdx[voice] = idx
+}
+
+// ExtendLastDuration adds a sustain's positional duration to the last event
+// for the given voice. Returns false if no event exists.
+func (vs *VoiceState) ExtendLastDuration(voice int, posNum, posDen int, gi int, events []Event) bool {
+	idx, ok := vs.lastIdx[voice]
+	if !ok {
+		return false
+	}
+	last := &events[idx]
+	if last.GroupIdx == gi {
+		last.NumSlots++
+	}
+	last.Duration.Num = last.Duration.Num*posDen + posNum*last.Duration.Den
+	last.Duration.Den = last.Duration.Den * posDen
+	gVal := frac.GCD(last.Duration.Num, last.Duration.Den)
+	last.Duration.Num /= gVal
+	last.Duration.Den /= gVal
+	if last.Nominal != nil {
+		last.Nominal.Num = last.Nominal.Num*posDen + posNum*last.Nominal.Den
+		last.Nominal.Den = last.Nominal.Den * posDen
+		ng2 := frac.GCD(last.Nominal.Num, last.Nominal.Den)
+		last.Nominal.Num /= ng2
+		last.Nominal.Den /= ng2
+	}
+	return true
+}
+
+// BuildCrossMeasureSustain creates a sustain event sourced from a prior-measure event.
+// Returns the new event and true, or zero Event and false if no prior pitch exists.
+func (vs *VoiceState) BuildCrossMeasureSustain(voice int, gi int, posNum, posDen int) (Event, bool) {
+	pe := vs.LastEvent(voice, nil)
+	if pe == nil || (pe.Type != EventNote && pe.Type != EventChord) {
+		return Event{}, false
+	}
+	ev := Event{
+		Type:            pe.Type,
+		Duration:        Fraction{Num: posNum, Den: posDen},
+		Letter:          pe.Letter,
+		Accidental:      pe.Accidental,
+		OctaveShift:     0, // sustain continues same pitch, no shift
+		ExplicitNatural: pe.ExplicitNatural,
+		Split:           true,
+		Voice:           voice,
+		GroupIdx:        gi,
+		NumSlots:        1,
+	}
+	if pe.Pitches != nil {
+		ev.Pitches = slices.Clone(pe.Pitches)
+	}
+	return ev, true
+}
+
+// FirstPriorVoice returns the first voice number (1-4) that has a pitch-bearing
+// prior event. Returns 0 if none found.
+func (vs *VoiceState) FirstPriorVoice() int {
+	if vs.prior == nil {
+		return 0
+	}
+	for v := 1; v <= 4; v++ {
+		if pe, ok := vs.prior[v]; ok && pe != nil && (pe.Type == EventNote || pe.Type == EventChord) {
+			return v
+		}
+	}
+	return 0
+}
+
+// PriorEvents returns the raw prior-events map for passing between measures.
+func (vs *VoiceState) PriorEvents() map[int]*Event {
+	return vs.prior
+}
+
+// ExportForNextMeasure builds the prior-events map to pass to the next measure.
+// It extracts the last pitch-bearing event per voice from the current events slice.
+func (vs *VoiceState) ExportForNextMeasure(events []Event) map[int]*Event {
+	result := make(map[int]*Event)
+	for v, idx := range vs.lastIdx {
+		if idx >= 0 && idx < len(events) {
+			ev := events[idx]
+			if ev.Type == EventNote || ev.Type == EventChord {
+				result[v] = &ev
+			} else {
+				// Voice existed but ended with a rest — nil sentinel
+				result[v] = nil
+			}
+		}
+	}
+	return result
+}
+
 // BeatDuration represents the duration of one beat as a fraction of a whole note.
 type BeatDuration struct {
 	Num, Den int
@@ -45,13 +175,13 @@ func ResolveBeatDuration(num, den int) BeatDuration {
 
 // resolveDurationsWithPrior resolves beat groups into events, accepting an optional
 // map of per-voice prior events for cross-measure sustain ties.
-func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEvents map[int]*Event) ([]Event, error) {
+func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEvents map[int]*Event) ([]Event, *VoiceState, error) {
 	var events []Event
-	voiceLastIdx := make(map[int]int) // per-voice last event index for sustain extension
+	vs := newVoiceState(priorEvents)
 
 	for gi, group := range groups {
 		if group.Err != nil {
-			return nil, group.Err
+			return nil, nil, group.Err
 		}
 
 		posCount := len(group.Slots)
@@ -64,62 +194,27 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 		// Sustain-only group (all positions are sustains)
 		if activeCount == 0 && len(group.Slots) > 0 {
 			if len(events) == 0 {
-				// Cross-measure sustain: use prior event for voice 1
-				var pe *Event
-				if priorEvents != nil {
-					pe = priorEvents[1]
-					if pe == nil {
-						for v := 2; v <= 4; v++ {
-							if priorEvents[v] != nil {
-								pe = priorEvents[v]
-								break
-							}
-						}
-					}
-					// nil sentinel means voice existed but had no pitch (rest);
-					// skip silently rather than returning an error.
-					if priorEvents[1] == nil {
-						continue
-					}
+				// Cross-measure sustain
+				v := vs.FirstPriorVoice()
+				if v == 0 {
+					return nil, nil, fmt.Errorf("sustain with no prior note")
 				}
-				if pe == nil || (pe.Type != EventNote && pe.Type != EventChord) {
-					return nil, fmt.Errorf("sustain with no prior note")
+				if !vs.HasPriorVoice(1) {
+					continue // nil sentinel: voice existed but had no pitch
 				}
 				sdNum := group.Multiplier * beat.Num
 				sdDen := beat.Den
-				ev := Event{
-					Type:            pe.Type,
-					Duration:        Fraction{Num: sdNum, Den: sdDen},
-					Letter:          pe.Letter,
-					Accidental:      pe.Accidental,
-					OctaveShift:     0, // sustain continues same pitch, no shift
-					ExplicitNatural: pe.ExplicitNatural,
-					Split:           true,
-					Voice:           1,
-					GroupIdx:        gi,
-					NumSlots:        len(group.Slots),
+				ev, ok := vs.BuildCrossMeasureSustain(v, gi, sdNum, sdDen)
+				if !ok {
+					return nil, nil, fmt.Errorf("sustain with no prior note")
 				}
-				if pe.Pitches != nil {
-					ev.Pitches = slices.Clone(pe.Pitches)
-				}
+				ev.NumSlots = len(group.Slots)
 				events = append(events, ev)
-				voiceLastIdx[1] = len(events) - 1
+				vs.Record(v, len(events)-1)
 			} else {
 				sdNum := group.Multiplier * beat.Num
 				sdDen := beat.Den
-				last := &events[len(events)-1]
-				last.Duration.Num = last.Duration.Num*sdDen + sdNum*last.Duration.Den
-				last.Duration.Den = last.Duration.Den * sdDen
-				gv := frac.GCD(last.Duration.Num, last.Duration.Den)
-				last.Duration.Num /= gv
-				last.Duration.Den /= gv
-				if last.Nominal != nil {
-					last.Nominal.Num = last.Nominal.Num*sdDen + sdNum*last.Nominal.Den
-					last.Nominal.Den = last.Nominal.Den * sdDen
-					ng2 := frac.GCD(last.Nominal.Num, last.Nominal.Den)
-					last.Nominal.Num /= ng2
-					last.Nominal.Den /= ng2
-				}
+				vs.ExtendLastDuration(1, sdNum, sdDen, gi, events)
 			}
 			continue
 		}
@@ -162,58 +257,21 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 			if slot.Type == SlotSustain {
 				if len(events) == 0 {
 					// Cross-measure sustain within a mixed group
-					var pe *Event
-					if priorEvents != nil {
-						pe = priorEvents[1]
-						if pe == nil {
-							for v := 2; v <= 4; v++ {
-								if priorEvents[v] != nil {
-									pe = priorEvents[v]
-									break
-								}
-							}
-						}
-						// nil sentinel: voice existed but had no pitch (rest); skip
-						if priorEvents[1] == nil {
-							continue
-						}
+					v := vs.FirstPriorVoice()
+					if v == 0 {
+						return nil, nil, fmt.Errorf("sustain with no prior note across groups")
 					}
-					if pe == nil || (pe.Type != EventNote && pe.Type != EventChord) {
-						return nil, fmt.Errorf("sustain with no prior note across groups")
+					if !vs.HasPriorVoice(1) {
+						continue // nil sentinel: voice existed but had no pitch
 					}
-					ev := Event{
-						Type:            pe.Type,
-						Duration:        Fraction{Num: posNum, Den: posDen},
-						Letter:          pe.Letter,
-						Accidental:      pe.Accidental,
-						OctaveShift:     0, // sustain continues same pitch, no shift
-						ExplicitNatural: pe.ExplicitNatural,
-						Split:           true,
-						Voice:           1,
-						GroupIdx:        gi,
-					}
-					if pe.Pitches != nil {
-						ev.Pitches = slices.Clone(pe.Pitches)
+					ev, ok := vs.BuildCrossMeasureSustain(v, gi, posNum, posDen)
+					if !ok {
+						return nil, nil, fmt.Errorf("sustain with no prior note across groups")
 					}
 					events = append(events, ev)
-					voiceLastIdx[1] = len(events) - 1
+					vs.Record(v, len(events)-1)
 				} else {
-					last := &events[len(events)-1]
-					if last.GroupIdx == gi {
-						last.NumSlots++
-					}
-					last.Duration.Num = last.Duration.Num*posDen + posNum*last.Duration.Den
-					last.Duration.Den = last.Duration.Den * posDen
-					gVal := frac.GCD(last.Duration.Num, last.Duration.Den)
-					last.Duration.Num /= gVal
-					last.Duration.Den /= gVal
-					if last.Nominal != nil {
-						last.Nominal.Num = last.Nominal.Num*posDen + posNum*last.Nominal.Den
-						last.Nominal.Den = last.Nominal.Den * posDen
-						ng2 := frac.GCD(last.Nominal.Num, last.Nominal.Den)
-						last.Nominal.Num /= ng2
-						last.Nominal.Den /= ng2
-					}
+					vs.ExtendLastDuration(1, posNum, posDen, gi, events)
 				}
 			} else if slot.Type == SlotChord && slot.Entries != nil {
 				// Voice-poly chord: expand into per-voice events
@@ -226,57 +284,26 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 							ev.Nominal = &Fraction{Num: nomNum, Den: nomDen}
 						}
 						events = append(events, ev)
-						voiceLastIdx[voice] = len(events) - 1
+						vs.Record(voice, len(events)-1)
 
 					case SlotSustain:
-						// Extend the last event for this voice
-						idx, ok := voiceLastIdx[voice]
-						if !ok && priorEvents != nil {
-							// Check for cross-measure sustain
-							if pe, hasPrior := priorEvents[voice]; hasPrior {
-								if pe == nil {
-									// Voice existed but had a rest — skip silently
-									continue
-								}
-								ev := Event{
-									Type:            pe.Type,
-									Duration:        Fraction{Num: posNum, Den: posDen},
-									Letter:          pe.Letter,
-									Accidental:      pe.Accidental,
-									OctaveShift:     0, // sustain continues same pitch, no shift
-									ExplicitNatural: pe.ExplicitNatural,
-									Split:           true,
-									Voice:           voice,
-									GroupIdx:        gi,
-									NumSlots:        1,
-								}
-								if pe.Pitches != nil {
-									ev.Pitches = slices.Clone(pe.Pitches)
-								}
-								events = append(events, ev)
-								voiceLastIdx[voice] = len(events) - 1
-								continue
-							}
+						// Extend the last event for this voice, or cross-measure
+						if vs.ExtendLastDuration(voice, posNum, posDen, gi, events) {
+							continue
 						}
+						// Cross-measure sustain
+						if !vs.HasPriorVoice(voice) {
+							return nil, nil, fmt.Errorf("sustain in voice %d with no prior note", voice)
+						}
+						if vs.prior[voice] == nil {
+							continue // nil sentinel: prior was a rest
+						}
+						ev, ok := vs.BuildCrossMeasureSustain(voice, gi, posNum, posDen)
 						if !ok {
-							return nil, fmt.Errorf("sustain in voice %d with no prior note", voice)
+							return nil, nil, fmt.Errorf("sustain in voice %d with no prior note", voice)
 						}
-						last := &events[idx]
-						if last.GroupIdx == gi {
-							last.NumSlots++
-						}
-						last.Duration.Num = last.Duration.Num*posDen + posNum*last.Duration.Den
-						last.Duration.Den = last.Duration.Den * posDen
-						gVal := frac.GCD(last.Duration.Num, last.Duration.Den)
-						last.Duration.Num /= gVal
-						last.Duration.Den /= gVal
-						if last.Nominal != nil {
-							last.Nominal.Num = last.Nominal.Num*posDen + posNum*last.Nominal.Den
-							last.Nominal.Den = last.Nominal.Den * posDen
-							ng2 := frac.GCD(last.Nominal.Num, last.Nominal.Den)
-							last.Nominal.Num /= ng2
-							last.Nominal.Den /= ng2
-						}
+						events = append(events, ev)
+						vs.Record(voice, len(events)-1)
 
 					case SlotRest:
 						ev := NewRestEvent(Fraction{Num: posNum, Den: posDen}, nil, voice, gi)
@@ -309,12 +336,12 @@ func resolveDurationsWithPrior(groups []ParseResult, beat BeatDuration, priorEve
 					}
 					events = append(events, ev)
 				}
-				voiceLastIdx[1] = len(events) - 1
+				vs.Record(1, len(events)-1)
 			}
 		}
 	}
 
-	return events, nil
+	return events, vs, nil
 }
 
 // splitAtBarline splits notes and chords that cross the invisible barline
@@ -1030,7 +1057,7 @@ func ParseDSLWithComments(lines []string, comments map[int][]string) DSLResult {
 		priorEvents := buildPriorEvents(measures)
 
 		// Resolve durations
-		events, err := resolveDurationsWithPrior(groups, md.beat, priorEvents)
+		events, _, err := resolveDurationsWithPrior(groups, md.beat, priorEvents)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("Measure %d: %v", mi+1, err))
 			if len(errs) >= 10 {
