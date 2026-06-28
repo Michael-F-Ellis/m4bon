@@ -39,13 +39,13 @@ type xmlReq struct {
 
 // --- Response helper ---
 
-func ok(data interface{}) string {
-	resp, _ := json.Marshal(map[string]interface{}{"ok": data})
+func ok(data any) string {
+	resp, _ := json.Marshal(map[string]any{"ok": data})
 	return string(resp)
 }
 
 func errMsg(msg string) string {
-	resp, _ := json.Marshal(map[string]interface{}{"err": msg})
+	resp, _ := json.Marshal(map[string]any{"err": msg})
 	return string(resp)
 }
 
@@ -144,7 +144,7 @@ func eventToJSON(ev parser.Event) jsonEvent {
 
 // --- WASM exports ---
 
-func parseWrapper(this js.Value, args []js.Value) interface{} {
+func parseWrapper(this js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return errMsg("m4bonParse: expected 1 argument (JSON string)")
 	}
@@ -198,7 +198,7 @@ func parseWrapper(this js.Value, args []js.Value) interface{} {
 	})
 }
 
-func renderHTMLWrapper(this js.Value, args []js.Value) interface{} {
+func renderHTMLWrapper(this js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return errMsg("m4bonRenderHTML: expected 1 argument (JSON string)")
 	}
@@ -223,7 +223,7 @@ func renderHTMLWrapper(this js.Value, args []js.Value) interface{} {
 	return ok(html)
 }
 
-func smfWrapper(this js.Value, args []js.Value) interface{} {
+func smfWrapper(this js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return errMsg("m4bonGenerateSMF: expected 1 argument (JSON string)")
 	}
@@ -259,7 +259,7 @@ func smfWrapper(this js.Value, args []js.Value) interface{} {
 	return ok(el)
 }
 
-func xmlWrapper(this js.Value, args []js.Value) interface{} {
+func xmlWrapper(this js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return errMsg("m4bonGenerateXML: expected 1 argument (JSON string)")
 	}
