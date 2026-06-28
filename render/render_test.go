@@ -19,7 +19,7 @@ func rawCells(t *testing.T, dsl string) CellSeq {
 	if len(r.Measures) == 0 {
 		t.Fatalf("no measures for %q", dsl)
 	}
-	_, nc, _ := buildMeasureCells(r.Measures[0], 1, true, false)
+	_, nc, _ := buildMeasureCells(r.Measures[0], 1, 1, true, false)
 	return nc
 }
 
@@ -808,7 +808,7 @@ func TestRenderCommentBlock(t *testing.T) {
 		GroupSlots:   []int{0},
 		CommentLines: []string{"Top row", "on two lines"},
 	}
-	commentCells, _, _ := buildMeasureCells(m, 1, true, true)
+	commentCells, _, _ := buildMeasureCells(m, 1, 1, true, true)
 
 	if len(commentCells) == 0 {
 		t.Fatal("expected comment cells")
@@ -829,7 +829,7 @@ func TestRenderCommentsHidden(t *testing.T) {
 		GroupSlots:   []int{0},
 		CommentLines: []string{"Should not appear"},
 	}
-	commentCells, _, _ := buildMeasureCells(m, 1, true, false)
+	commentCells, _, _ := buildMeasureCells(m, 1, 1, true, false)
 	if len(commentCells) != 0 {
 		t.Errorf("expected no comment cells, got %d", len(commentCells))
 	}
@@ -844,7 +844,7 @@ func TestRenderTrailingComment(t *testing.T) {
 		GroupSlots:           []int{0},
 		TrailingCommentLines: []string{"After"},
 	}
-	_, _, trailingCells := buildMeasureCells(m, 1, true, true)
+	_, _, trailingCells := buildMeasureCells(m, 1, 1, true, true)
 
 	// Trailing comment should be in trailingCells (3rd return value)
 	found := false

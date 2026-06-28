@@ -21,6 +21,20 @@ func Render(measures []parser.MeasureResult, asciiLeaps bool, showSubscripts boo
 	return FormatANSIRows(rows, maxCW, maxNW, maxLW, asciiLeaps)
 }
 
+// numWidth returns the number of decimal digits needed to display n.
+// n must be >= 0. 0 returns 1.
+func numWidth(n int) int {
+	if n < 10 {
+		return 1
+	}
+	w := 0
+	for n > 0 {
+		n /= 10
+		w++
+	}
+	return w
+}
+
 // BuildCells converts measures into the intermediate Cell representation,
 // one CellSeq per measure. The core rendering logic lives here — it is
 // independent of any output format (terminal, HTML, etc.).
@@ -30,8 +44,10 @@ func BuildCells(measures []parser.MeasureResult, showSubscripts bool, showCommen
 	if len(measures) > 0 && measures[0].IsPickup {
 		offset = 0
 	}
+	lastNum := len(measures) - 1 + offset
+	measureNumWidth := numWidth(lastNum)
 	for mi, m := range measures {
-		commentCells, noteCells, trailingCells := buildMeasureCells(m, mi+offset, showSubscripts, showComments)
+		commentCells, noteCells, trailingCells := buildMeasureCells(m, mi+offset, measureNumWidth, showSubscripts, showComments)
 		cells := make(CellSeq, 0, len(commentCells)+len(noteCells)+len(trailingCells)+2)
 		cells = append(cells, commentCells...)
 		if len(commentCells) > 0 {
@@ -55,7 +71,8 @@ type eventGroup struct {
 
 // buildMeasureCells produces cells for a single measure. Returns a
 // separate comment block for any '!' comment preceding this measure.
-func buildMeasureCells(m parser.MeasureResult, measureNum int, showSubscripts bool, showComments bool) (commentCells CellSeq, noteCells CellSeq, trailingCells CellSeq) {
+// measureNumWidth is the field width for right-justifying the measure number.
+func buildMeasureCells(m parser.MeasureResult, measureNum int, measureNumWidth int, showSubscripts bool, showComments bool) (commentCells CellSeq, noteCells CellSeq, trailingCells CellSeq) {
 	if showComments {
 		for _, cl := range m.CommentLines {
 			commentCells = append(commentCells, Cell{Content: "! ", Style: StyleComment, Italic: true})
@@ -64,8 +81,9 @@ func buildMeasureCells(m parser.MeasureResult, measureNum int, showSubscripts bo
 		}
 	}
 
-	// Measure number prefix: "N:  "
-	prefix := fmt.Sprintf("%d:  ", measureNum)
+	// Measure number prefix: right-justified within a fixed-width field
+	// so content after the number doesn't shift when measure counts grow.
+	prefix := fmt.Sprintf("%*d:  ", measureNumWidth, measureNum)
 	noteCells = append(noteCells, Cell{Content: prefix, Style: StyleDefault})
 
 	// Build key signature accidental map for this measure
@@ -109,7 +127,7 @@ func buildMeasureCells(m parser.MeasureResult, measureNum int, showSubscripts bo
 				}
 			}
 			startSustains := totalSustains - intraGroupSustains
-			for s := 0; s < startSustains; s++ {
+			for range startSustains {
 				noteCells = append(noteCells, Cell{Content: "-", Style: StyleSustainRest})
 			}
 
@@ -304,13 +322,15 @@ func BuildRows(measures []parser.MeasureResult, showSubscripts bool, showComment
 		}
 	}
 
+	lastNum := len(measures) - 1 + offset
+	measureNumWidth := numWidth(lastNum)
 	for mi, m := range measures {
 		var row MeasureRow
 
 		if anyChords {
 			row.ChordCells = buildChordCells(m)
 		}
-		row.CommentCells, row.NoteCells, row.TrailingCommentCells = buildMeasureCells(m, mi+offset, showSubscripts, showComments)
+		row.CommentCells, row.NoteCells, row.TrailingCommentCells = buildMeasureCells(m, mi+offset, measureNumWidth, showSubscripts, showComments)
 		// Strip trailing newline cell for column width computation
 		row.NoteCells = stripTrailingNewline(row.NoteCells)
 		if anyLyrics {
