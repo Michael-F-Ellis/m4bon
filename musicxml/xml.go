@@ -4,7 +4,8 @@ package musicxml
 import (
 	"encoding/xml"
 	"fmt"
-	"sort"
+	"slices"
+	"cmp"
 	"strings"
 
 	"github.com/mellis/m4bon/frac"
@@ -134,7 +135,7 @@ const DPPQ = frac.DPPQ
 func noteTypeForDuration(f parser.Fraction) string {
 	n := f.Num
 	d := f.Den
-	g := gcd(n, d)
+	g := frac.GCD(n, d)
 	n /= g
 	d /= g
 
@@ -182,18 +183,14 @@ func noteTypeForDuration(f parser.Fraction) string {
 	return ""
 }
 
-func isPowerOf2(n int) bool {
-	return frac.IsPowerOf2(n)
-}
-
 // dotCount returns the number of augmentation dots for a duration fraction.
 func dotCount(f parser.Fraction) int {
 	n := f.Num
 	d := f.Den
-	g := gcd(n, d)
+	g := frac.GCD(n, d)
 	n /= g
 	d /= g
-	if !isPowerOf2(d) {
+	if !frac.IsPowerOf2(d) {
 		return 0
 	}
 	switch n {
@@ -205,10 +202,6 @@ func dotCount(f parser.Fraction) int {
 		return 3
 	}
 	return 0
-}
-
-func gcd(a, b int) int {
-	return frac.GCD(a, b)
 }
 
 // makeDots returns a slice of DotEl for the given dot count.
@@ -456,11 +449,11 @@ func Generate(measures []parser.MeasureResult, initialFifths int) (string, error
 		}
 
 		// Sort entries by (tick, voice) for correct MusicXML onset order
-		sort.SliceStable(entries, func(i, j int) bool {
-			if entries[i].tick != entries[j].tick {
-				return entries[i].tick < entries[j].tick
+		slices.SortStableFunc(entries, func(a, b noteEntry) int {
+			if c := cmp.Compare(a.tick, b.tick); c != 0 {
+				return c
 			}
-			return entries[i].note.Voice < entries[j].note.Voice
+			return cmp.Compare(a.note.Voice, b.note.Voice)
 		})
 
 		xmlNotes := make([]NoteEl, len(entries))

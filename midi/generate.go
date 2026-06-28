@@ -4,7 +4,8 @@ package midi
 
 import (
 	"fmt"
-	"sort"
+	"slices"
+	"cmp"
 	"strings"
 	"time"
 
@@ -74,8 +75,8 @@ func ticksToDuration(ticks int64, bpm float64) time.Duration {
 
 // buildTrackFromEvents sorts timedEvents by tick and produces an SMF track.
 func buildTrackFromEvents(events []timedEvent) smf.Track {
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].tick < events[j].tick
+	slices.SortFunc(events, func(a, b timedEvent) int {
+		return cmp.Compare(a.tick, b.tick)
 	})
 
 	var track smf.Track
@@ -614,8 +615,8 @@ func GenerateEventList(measures []parser.MeasureResult, bpm float64, opts SMFOpt
 		})
 	}
 
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].Tick < events[j].Tick
+	slices.SortFunc(events, func(a, b MidiEvent) int {
+		return cmp.Compare(a.Tick, b.Tick)
 	})
 
 	return EventListResult{
