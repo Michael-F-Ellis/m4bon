@@ -7,13 +7,13 @@ replace github.com/Michael-F-Ellis/macaudio => /Users/mellis/macaudio
 require (
 	github.com/Michael-F-Ellis/macaudio v0.0.0-00010101000000-000000000000
 	github.com/charmbracelet/bubbletea v1.3.10
+	github.com/charmbracelet/lipgloss v1.1.0
 	gitlab.com/gomidi/midi/v2 v2.3.23
 )
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect
-	github.com/charmbracelet/lipgloss v1.1.0 // indirect
 	github.com/charmbracelet/x/ansi v0.11.6 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect

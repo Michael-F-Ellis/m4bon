@@ -92,7 +92,7 @@ func normalizeRoot(raw string) (letter string, acc int) {
 		if (ch >= 'a' && ch <= 'g') || (ch >= 'A' && ch <= 'G') {
 			letter = strings.ToUpper(string(ch))
 			// Count accidentals before this letter
-			for j := 0; j < i; j++ {
+			for j := range i {
 				switch runes[j] {
 				case '#':
 					acc++

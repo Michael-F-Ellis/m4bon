@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mellis/m4bon/frac"
 )
 
 func TestParseBasicNotes(t *testing.T) {
@@ -153,7 +155,7 @@ func TestParseCompoundTime(t *testing.T) {
 		t.Fatalf("expected 6 events, got %d", len(r.Measures[0].Events))
 	}
 	for i, ev := range r.Measures[0].Events {
-		g := gcd(ev.Duration.Num, ev.Duration.Den)
+		g := frac.GCD(ev.Duration.Num, ev.Duration.Den)
 		num := ev.Duration.Num / g
 		den := ev.Duration.Den / g
 		if num != 1 || den != 8 {

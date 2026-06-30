@@ -242,30 +242,6 @@ type KeySignature struct {
 
 // --- Helpers ---
 
-// gcd returns the greatest common divisor of a and b.
-// Deprecated: use frac.GCD
-func gcd(a, b int) int {
-	return frac.GCD(a, b)
-}
-
-// isPowerOf2 returns true if n is a power of two.
-// Deprecated: use frac.IsPowerOf2
-func isPowerOf2(n int) bool {
-	return frac.IsPowerOf2(n)
-}
-
-// lowerPowerOf2 returns the largest power of two less than n.
-// Deprecated: use frac.LowerPowerOf2
-func lowerPowerOf2(n int) int {
-	return frac.LowerPowerOf2(n)
-}
-
-// isStandardDuration returns true if the reduced fraction z/n is a standard duration.
-// Deprecated: use frac.IsStandardDuration
-func isStandardDuration(z, n int) bool {
-	return frac.IsStandardDuration(z, n)
-}
-
 func countActivePositions(slots []Slot) int {
 	n := 0
 	for _, s := range slots {

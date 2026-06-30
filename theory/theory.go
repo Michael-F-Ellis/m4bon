@@ -17,15 +17,12 @@ var flatOrder = []string{"b", "e", "a", "d", "g", "c", "f"}
 func FifthsToAccidentalMap(fifths int) map[string]int {
 	m := make(map[string]int)
 	if fifths > 0 {
-		for i := 0; i < fifths && i < len(sharpOrder); i++ {
+		for i := range min(fifths, len(sharpOrder)) {
 			m[sharpOrder[i]] = 1
 		}
 	} else if fifths < 0 {
-		n := -fifths
-		if n > 7 {
-			n = 7
-		}
-		for i := 0; i < n; i++ {
+		n := min(-fifths, 7)
+		for i := range n {
 			m[flatOrder[i]] = -1
 		}
 	}

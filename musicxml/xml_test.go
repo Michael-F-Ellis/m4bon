@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mellis/m4bon/frac"
 	"github.com/mellis/m4bon/parser"
 )
 
@@ -128,7 +129,7 @@ func TestIsPowerOf2(t *testing.T) {
 		{0, false}, {3, false}, {5, false}, {6, false}, {7, false}, {9, false}, {-4, false},
 	}
 	for _, tc := range cases {
-		got := isPowerOf2(tc.n)
+		got := frac.IsPowerOf2(tc.n)
 		if got != tc.want {
 			t.Errorf("isPowerOf2(%d) = %v, want %v", tc.n, got, tc.want)
 		}
