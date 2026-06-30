@@ -13,6 +13,7 @@ m4bon -f examples/twinkle-twinkle.dsl -o twinkle.mxl
 
 | File | Piece | Composer | Key | Meter |
 |------|-------|----------|-----|-------|
+| `three-blind-mice.dsl` | Three Blind Mice (Round) | Traditional | C major | 4/4 |
 | `twinkle-twinkle.dsl` | Twinkle Twinkle Little Star | Traditional | C major | 4/4 |
 | `ode-to-joy.dsl` | Ode to Joy (Theme) | Beethoven | C major | 4/4 |
 | `minuet-in-g.dsl` | Minuet in G (BWV Anh. 114) | Petzold/Bach | G major | 3/4 |
