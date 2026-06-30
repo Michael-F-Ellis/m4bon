@@ -270,7 +270,8 @@ g f           :H G ; :L koo now!
 c-e f-d       :H C D :L Well sing est thou
 e f-a         :H C D :L cu koo, and
 e-g d-b       :H G F :L I can sing it
-c ;           :H G ; :L too. ;`
+c ;           :H G ; :L too. ;
+`
   },
   {
     title: 'Three Blind Mice',
