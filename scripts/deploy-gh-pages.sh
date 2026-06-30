@@ -8,6 +8,20 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Refuse to run if the working tree is dirty — the stash/pop cycle can lose
+# untracked files (e.g. scripts/gen-examples/main.go, web/examples.js).
+# Commit or stash your changes first, then deploy.
+if ! git diff-index --quiet HEAD --; then
+  echo "ERROR: You have unstaged or uncommitted changes. Commit them first, then deploy." >&2
+  echo "  git status" >&2
+  exit 1
+fi
+if [ -n "$(git ls-files --others --exclude-standard)" ]; then
+  echo "ERROR: You have untracked files. Commit or .gitignore them first, then deploy." >&2
+  echo "  git status" >&2
+  exit 1
+fi
+
 WEB_DIR="web"
 FILES=(
   index.html
@@ -16,21 +30,12 @@ FILES=(
   wasm_exec.js
   WebAudioFontPlayer.js
   m4bon.wasm
+  examples.js
   bass-As1.ogg
   bass-Cs2.ogg
   bass-E1.ogg
   bass-G1.ogg
-  examples.zip
 )
-
-# Create examples.zip from the examples/ directory
-EXAMPLES_DIR="examples"
-if [ -d "$EXAMPLES_DIR" ]; then
-  echo "Creating examples.zip..."
-  (cd "$EXAMPLES_DIR" && zip -r "../$WEB_DIR/examples.zip" .)
-else
-  echo "WARNING: $EXAMPLES_DIR/ not found — skipping examples.zip"
-fi
 
 # Verify all files exist
 for f in "${FILES[@]}"; do
@@ -52,8 +57,8 @@ for f in "${FILES[@]}"; do
 done
 
 # Also copy the examples directory to staging for gh-pages deployment
-if [ -d "$EXAMPLES_DIR" ]; then
-  cp -r "$EXAMPLES_DIR" "$STAGING/"
+if [ -d "examples" ]; then
+  cp -r "examples" "$STAGING/"
 fi
 
 # Save current branch so we can return

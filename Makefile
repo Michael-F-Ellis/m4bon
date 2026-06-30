@@ -17,7 +17,7 @@
 BINARY := m4bon
 GO := go
 
-.PHONY: all build test check clean golden notify wasm gh-pages serve
+.PHONY: all build test check clean golden notify wasm gen-examples gh-pages serve
 
 all: build wasm test
 
@@ -43,9 +43,15 @@ notify:
 	@if [ -f ./notify.sh ]; then ./notify.sh "$(MSG)"; fi
 
 # Build the WebAssembly binary for the web TUI.
+# Regenerates examples.js from examples/*.dsl first.
 # Uses Go's built-in js/wasm target — no external toolchain needed.
-wasm:
+wasm: gen-examples
 	GOOS=js GOARCH=wasm $(GO) build -o web/m4bon.wasm ./wasm/
+
+# Regenerate web/examples.js from examples/*.dsl files.
+# Automatically run as part of ` + "`" + `make wasm` + "`" + `; also callable standalone.
+gen-examples:
+	$(GO) run ./scripts/gen-examples/main.go
 
 # Deploy the web TUI to the gh-pages branch for GitHub Pages.
 # After running, push with: git push origin gh-pages

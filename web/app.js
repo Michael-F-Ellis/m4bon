@@ -158,7 +158,9 @@ class M4bonApp {
     document.getElementById('btn-save-mxl').addEventListener('click', () => this.saveMXL());
     document.getElementById('btn-save-dsl').addEventListener('click', () => this.saveDSL());
     document.getElementById('btn-copy').addEventListener('click', () => this.copyDSL());
-    document.getElementById('btn-examples').addEventListener('click', () => this.downloadExamples());
+    document.getElementById('btn-examples').addEventListener('click', () => this.openExamplesDialog());
+    document.getElementById('examples-backdrop').addEventListener('click', () => this.closeExamplesDialog());
+    document.getElementById('examples-close').addEventListener('click', () => this.closeExamplesDialog());
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     window.addEventListener('resize', () => this.autoResizeTextarea());
@@ -1355,11 +1357,45 @@ class M4bonApp {
     });
   }
 
-  downloadExamples() {
-    const a = document.createElement('a');
-    a.href = 'examples.zip';
-    a.download = 'm4bon-examples.zip';
-    a.click();
+  openExamplesDialog() {
+    const modal = document.getElementById('examples-modal');
+    const list = document.getElementById('examples-list');
+    list.innerHTML = '';
+    EXAMPLES.forEach((ex, i) => {
+      const item = document.createElement('div');
+      item.className = 'examples-item';
+      item.tabIndex = 0;
+      item.innerHTML = `<div class="title">${ex.title}</div><div class="filename">${ex.filename}</div>`;
+      item.addEventListener('click', () => this.loadExample(i));
+      item.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.loadExample(i); });
+      list.appendChild(item);
+    });
+    modal.classList.remove('hidden');
+    const first = list.firstElementChild;
+    if (first) setTimeout(() => first.focus(), 50);
+  }
+
+  closeExamplesDialog() {
+    document.getElementById('examples-modal').classList.add('hidden');
+  }
+
+  loadExample(index) {
+    const ex = EXAMPLES[index];
+    if (!ex) return;
+    this.dslInput.value = ex.content;
+    this.dsl = ex.content;
+    this.parseAndRender();
+    if (this.parsedData) {
+      const reformatted = this.reformatColumns(this.dsl);
+      if (reformatted !== this.dslInput.value) {
+        this.dslInput.value = reformatted;
+        this.dsl = reformatted;
+      }
+    }
+    this.autoResizeTextarea();
+    this.saveState();
+    this.closeExamplesDialog();
+    this.statusText.textContent = `Loaded example: ${ex.title}`;
   }
 
   // --- State persistence ---
@@ -1427,6 +1463,7 @@ class M4bonApp {
         this.chkMetronome.checked = this.metronomeOn; break;
       case 'o': this.showSubscripts = !this.showSubscripts;
         this.chkSubscripts.checked = this.showSubscripts; this.updateMeasures(); break;
+      case 'Escape': this.closeExamplesDialog(); break;
       case 'c': this.showComments = !this.showComments;
         this.chkComments.checked = this.showComments; this.updateMeasures(); break;
     }
