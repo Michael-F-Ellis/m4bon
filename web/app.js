@@ -12,7 +12,9 @@ const go = new Go();
 
 async function bootstrapWASM() {
   try {
-    const resp = await fetch('m4bon.wasm');
+    const scriptEl = document.querySelector('script[src*="app.js"]');
+    const version = scriptEl ? new URL(scriptEl.src, window.location.href).searchParams.get('v') : '0.23.1';
+    const resp = await fetch(`m4bon.wasm?v=${version || '0.23.1'}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const bytes = await resp.arrayBuffer();
     const result = await WebAssembly.instantiate(bytes, go.importObject);

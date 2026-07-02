@@ -49,7 +49,7 @@ wasm: gen-examples
 	GOOS=js GOARCH=wasm $(GO) build -o web/m4bon.wasm ./wasm/
 
 # Regenerate web/examples.js from examples/*.dsl files.
-# Automatically run as part of ` + "`" + `make wasm` + "`" + `; also callable standalone.
+# Automatically run as part of 'make wasm'; also callable standalone.
 gen-examples:
 	$(GO) run ./scripts/gen-examples/main.go
 
