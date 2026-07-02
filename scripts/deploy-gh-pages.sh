@@ -24,6 +24,7 @@ fi
 
 WEB_DIR="web"
 FILES=(
+  .nojekyll
   index.html
   app.js
   app.css
