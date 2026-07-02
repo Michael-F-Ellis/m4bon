@@ -39,6 +39,9 @@ jobs:
       - name: Generate examples list
         run: go run ./scripts/gen-examples/main.go
 
+      - name: Copy examples to web directory
+        run: cp -r examples web/examples
+
       - name: Build WASM
         run: GOOS=js GOARCH=wasm go build -o web/m4bon.wasm ./wasm/
 
