@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# deploy-gh-pages.sh — Deploy web/ to the gh-pages branch for GitHub Pages.
+# deploy-gh-pages.sh — Deploy web/ to the gh-pages branch for GitHub Pages (legacy).
 #
-# Prerequisite: `make wasm` must have already built web/m4bon.wasm.
-# After running: git push origin gh-pages
-# Then in repo Settings → Pages: Source = "Deploy from a branch", branch = gh-pages, / (root).
+# Prefer the GitHub Actions workflow (.github/workflows/deploy.yml) which
+# builds and deploys automatically on pushes to main.
+#
+# This script is kept for manual fallback. If using it:
+#   Prerequisite: `make wasm` must have already built web/m4bon.wasm.
+#   After running: git push origin gh-pages
+#   Then in repo Settings → Pages: Source = "Deploy from a branch", branch = gh-pages, / (root).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

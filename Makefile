@@ -53,9 +53,13 @@ wasm: gen-examples
 gen-examples:
 	$(GO) run ./scripts/gen-examples/main.go
 
-# Deploy the web TUI to the gh-pages branch for GitHub Pages.
-# After running, push with: git push origin gh-pages
-# Then enable GitHub Pages in repo Settings → Pages → Source: "Deploy from branch" → gh-pages.
+# Deploy via GitHub Actions (recommended):
+#   Push to main → .github/workflows/deploy.yml handles build + deploy.
+#   Then set repo Settings → Pages → Source to "GitHub Actions".
+#
+# Legacy deploy — to the gh-pages branch (kept for fallback):
+#   make gh-pages  &&  git push origin gh-pages
+#   Then set repo Settings → Pages → Source to "Deploy from a branch".
 gh-pages: wasm
 	@./scripts/deploy-gh-pages.sh
 

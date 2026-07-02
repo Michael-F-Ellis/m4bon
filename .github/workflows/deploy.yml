@@ -1,0 +1,55 @@
+# Deploy web TUI to GitHub Pages via GitHub Actions.
+#
+# Triggered on pushes to main. Builds the WASM binary and publishes
+# the web/ directory to GitHub Pages using the official actions.
+#
+# Prerequisites:
+#   - Repository → Settings → Pages → Source: "GitHub Actions"
+#     (not "Deploy from a branch")
+---
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+# Allow only one concurrent deployment, skipping runs queued between
+# the run in-progress and the latest queued.
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Generate examples list
+        run: go run ./scripts/gen-examples/main.go
+
+      - name: Build WASM
+        run: GOOS=js GOARCH=wasm go build -o web/m4bon.wasm ./wasm/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
