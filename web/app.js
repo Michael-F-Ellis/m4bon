@@ -41,7 +41,7 @@ class M4bonApp {
     this.endMeasure = 0;
     this.showSubscripts = true;
     this.showComments = true;
-    this.keypadActive = false;
+    this.editMode = false;
     this.metronomeOn = true;
     this.rootsOn = false;
     this.backbeatsOn = false;
@@ -71,7 +71,6 @@ class M4bonApp {
     this._recordMeasureSecs = null;
     this._recordCountInSec = 0;
     this._recMimeType = '';
-    this._activeActionIdx = -1;
     this._popoverEl = null;
     this.playbackTimer = null;
     this.measureHighlightTimer = null;
@@ -89,6 +88,7 @@ class M4bonApp {
   }
 
   initDOM() {
+    this.appEl = document.getElementById('app');
     this.dslInput = document.getElementById('dsl-input');
     this.measuresEl = document.getElementById('measures');
     this.timeSigEl = document.getElementById('time-sig');
@@ -167,30 +167,14 @@ class M4bonApp {
     document.getElementById('examples-backdrop').addEventListener('click', () => this.closeExamplesDialog());
     document.getElementById('examples-close').addEventListener('click', () => this.closeExamplesDialog());
 
-    this.btnToggleKeypad = document.getElementById('btn-toggle-keypad');
+    this.btnToggleEdit = document.getElementById('btn-toggle-edit');
     this.keypadEl = document.getElementById('virtual-keypad');
 
-    this.measureActionsEl = document.getElementById('measure-actions');
-    this.actionMeasureIdxEl = document.getElementById('action-measure-idx');
-    this.btnEditMeasure = document.getElementById('btn-edit-measure');
-    this.btnAddComment = document.getElementById('btn-add-comment');
-    this.btnClearComments = document.getElementById('btn-clear-comments');
-
-    this.btnToggleKeypad.addEventListener('click', () => this.toggleKeypad());
+    this.btnToggleEdit.addEventListener('click', () => this.toggleEditMode());
     this.keypadEl.addEventListener('click', (e) => {
       const btn = e.target.closest('button');
       if (!btn) return;
       this.handleKeypadPress(btn);
-    });
-
-    this.btnEditMeasure.addEventListener('click', () => {
-      if (this._activeActionIdx >= 0) this.focusMeasure(this._activeActionIdx);
-    });
-    this.btnAddComment.addEventListener('click', () => {
-      if (this._activeActionIdx >= 0) this.insertCommentBefore(this._activeActionIdx);
-    });
-    this.btnClearComments.addEventListener('click', () => {
-      if (this._activeActionIdx >= 0) this.clearComments(this._activeActionIdx);
     });
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
@@ -375,43 +359,6 @@ class M4bonApp {
       allElements[renderedIdx].classList.add('m4bon-cursor');
       allElements[renderedIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
-
-    // Update action bar for cursor-linked measure
-    this._updateActionBar(renderedIdx, allElements);
-  }
-
-  _updateActionBar(renderedIdx, allElements) {
-    const totalMeasures = this.measuresEl.querySelectorAll('.m4bon-measure').length;
-    if (totalMeasures === 0 || this.isPlaying || this.isRecording) {
-      this.measureActionsEl.classList.remove('visible');
-      this._activeActionIdx = -1;
-      return;
-    }
-
-    // Walk from renderedIdx backward to find the nearest measure element
-    let measureIdx = -1;
-    for (let i = renderedIdx; i >= 0 && i < allElements.length; i--) {
-      const el = allElements[i];
-      if (el.classList.contains('m4bon-measure')) {
-        measureIdx = parseInt(el.dataset.idx);
-        break;
-      }
-    }
-    if (measureIdx < 0 || measureIdx >= totalMeasures) {
-      this.measureActionsEl.classList.remove('visible');
-      this._activeActionIdx = -1;
-      return;
-    }
-
-    this._activeActionIdx = measureIdx;
-    this.actionMeasureIdxEl.textContent = measureIdx + 1;
-    this.measureActionsEl.classList.add('visible');
-
-    // Check if this measure has comment lines
-    const measureEl = this.measuresEl.querySelector(`.m4bon-measure[data-idx="${measureIdx}"]`);
-    const hasComments = measureEl && measureEl.previousElementSibling &&
-      measureEl.previousElementSibling.classList.contains('m4bon-comment-line');
-    this.btnClearComments.style.display = hasComments ? '' : 'none';
   }
 
   updateRangeDisplay() {
@@ -1453,8 +1400,7 @@ class M4bonApp {
     popover.innerHTML =
       '<button data-action="edit">&#9998; Edit measure</button>' +
       '<button data-action="comment">+ Add comment above</button>' +
-      '<div class="popover-divider"></div>' +
-      '<button data-action="clear" class="popover-danger">&mdash; Clear comments</button>';
+      '<button data-action="clear">&mdash; Clear comments</button>';
 
     popover.addEventListener('click', (e) => {
       const btn = e.target.closest('button');
@@ -1519,6 +1465,7 @@ class M4bonApp {
       if (measureLine === idx) {
         const before = lines.slice(0, i).join('\n');
         const pos = before.length + (before.length > 0 ? 1 : 0);
+        this.toggleEditMode(true);
         this.dslInput.focus();
         this.dslInput.setSelectionRange(pos, pos);
         // Estimate scroll position to bring line into view
@@ -1548,6 +1495,7 @@ class M4bonApp {
         this.dsl = this.dslInput.value;
         // Place cursor after the inserted "! "
         const cursorPos = before.length + prefix.length + 2;
+        this.toggleEditMode(true);
         this.dslInput.setSelectionRange(cursorPos, cursorPos);
         this.dslInput.dispatchEvent(new Event('input'));
         this.autoResizeTextarea();
@@ -1637,21 +1585,26 @@ class M4bonApp {
 
   // --- Virtual Keypad ---
 
-  toggleKeypad(forceState) {
-    this.keypadActive = forceState !== undefined ? forceState : !this.keypadActive;
-    if (this.keypadActive) {
-      this.btnToggleKeypad.classList.add('active');
-      this.btnToggleKeypad.style.background = 'var(--purple)';
-      this.dslInput.inputMode = 'none';
+  toggleEditMode(forceState) {
+    this.editMode = forceState !== undefined ? forceState : !this.editMode;
+    if (this.editMode) {
+      this.appEl.classList.remove('view-mode');
+      this.appEl.classList.add('edit-mode');
+      this.btnToggleEdit.textContent = '✓ Done';
+      this.btnToggleEdit.style.background = 'var(--purple)';
       this.keypadEl.classList.remove('hidden');
+      this.dslInput.inputMode = 'none';
       this.dslInput.focus();
     } else {
-      this.btnToggleKeypad.classList.remove('active');
-      this.btnToggleKeypad.style.background = '';
-      this.dslInput.inputMode = '';
+      this.appEl.classList.remove('edit-mode');
+      this.appEl.classList.add('view-mode');
+      this.btnToggleEdit.textContent = '✎ Edit';
+      this.btnToggleEdit.style.background = '';
       this.keypadEl.classList.add('hidden');
+      this.dslInput.inputMode = '';
+      this.dslInput.blur();
     }
-    localStorage.setItem('m4bon-keypad-active', this.keypadActive);
+    localStorage.setItem('m4bon-edit-mode', this.editMode);
     this.autoResizeTextarea();
   }
 
@@ -1700,7 +1653,7 @@ class M4bonApp {
       localStorage.setItem('m4bon-metroVol', this.metronomeVol);
       localStorage.setItem('m4bon-subscripts', this.showSubscripts);
       localStorage.setItem('m4bon-comments', this.showComments);
-      localStorage.setItem('m4bon-keypad-active', this.keypadActive);
+      localStorage.setItem('m4bon-edit-mode', this.editMode);
     } catch (e) { /* localStorage unavailable */ }
   }
 
@@ -1717,16 +1670,16 @@ class M4bonApp {
       this.metronomeVol = parseInt(localStorage.getItem('m4bon-metroVol')) || 50;
       this.showSubscripts = localStorage.getItem('m4bon-subscripts') !== 'false';
       this.showComments = localStorage.getItem('m4bon-comments') !== 'false';
-      this.keypadActive = localStorage.getItem('m4bon-keypad-active') === 'true';
+      this.editMode = localStorage.getItem('m4bon-edit-mode') === 'true';
     } catch (e) { /* ignore */ }
     this.tempoDisplay.textContent = this.bpm;
     this.chkMetronome.checked = this.metronomeOn;
     this.chkSubscripts.checked = this.showSubscripts;
     this.chkComments.checked = this.showComments;
 
-    // Keypad initial state — must happen after DOM is ready
-    if (this.keypadActive) {
-      this.toggleKeypad(true);
+    // Edit mode initial state — must happen after DOM is ready
+    if (this.editMode) {
+      this.toggleEditMode(true);
     }
   }
 
@@ -1738,6 +1691,10 @@ class M4bonApp {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
         this.reformatInput();
+        return;
+      }
+      if (e.key === 'Escape' && this.editMode) {
+        this.toggleEditMode(false);
         return;
       }
       if (e.key !== 'Escape') return;

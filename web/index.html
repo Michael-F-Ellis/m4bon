@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="app.css?v=0.24.0">
 </head>
 <body>
-  <div id="app">
+  <div id="app" class="view-mode">
     <div id="top-bar">
       <span id="time-sig">M4/4</span>
       <span id="key-sig">K0 (C major)</span>
@@ -17,13 +17,6 @@
 
     <div id="dsl-area">
       <textarea id="dsl-input" placeholder="Type m4bon DSL here..." spellcheck="false"></textarea>
-    </div>
-
-    <div id="measure-actions">
-      <span class="action-label">Measure <span id="action-measure-idx">1</span>:</span>
-      <button id="btn-edit-measure">&#9998; Edit</button>
-      <button id="btn-add-comment">+ Comment</button>
-      <button id="btn-clear-comments">&mdash; Clear cmts</button>
     </div>
 
     <div id="virtual-keypad" class="hidden">
@@ -105,7 +98,7 @@
         <button id="btn-save-dsl">Save .dsl</button>
         <button id="btn-copy">Copy DSL</button>
         <button id="btn-examples">Examples</button>
-        <button id="btn-toggle-keypad">⌨️ Keypad</button>
+        <button id="btn-toggle-edit">&#9998; Edit</button>
       </div>
     </div>
 
