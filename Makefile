@@ -17,7 +17,7 @@
 BINARY := m4bon
 GO := go
 
-.PHONY: all build test check clean golden notify wasm gen-examples gh-pages serve
+.PHONY: all build test check clean golden notify wasm gen-examples gh-pages serve deploy
 
 all: build wasm test
 
@@ -68,3 +68,14 @@ gh-pages: wasm
 serve:
 	@lsof -ti:8087 | xargs kill -9 2>/dev/null; true
 	cd web && python3 -m http.server 8087
+
+# Deploy: rebuild everything, verify all tests pass, confirm working tree is
+# clean, then push to main. GitHub Actions handles the Pages deploy.
+deploy: check
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "ERROR: Working tree has uncommitted changes:"; \
+		git status --short; \
+		exit 1; \
+	fi
+	@echo "Pushing to main..."
+	git push origin main
