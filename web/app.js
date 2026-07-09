@@ -1593,7 +1593,6 @@ class M4bonApp {
       this.btnToggleEdit.textContent = '✓ Done';
       this.btnToggleEdit.style.background = 'var(--purple)';
       this.keypadEl.classList.remove('hidden');
-      this.dslInput.inputMode = 'none';
       this.dslInput.focus();
     } else {
       this.appEl.classList.remove('edit-mode');
@@ -1601,7 +1600,6 @@ class M4bonApp {
       this.btnToggleEdit.textContent = '✎ Edit';
       this.btnToggleEdit.style.background = '';
       this.keypadEl.classList.add('hidden');
-      this.dslInput.inputMode = '';
       this.dslInput.blur();
     }
     localStorage.setItem('m4bon-edit-mode', this.editMode);
