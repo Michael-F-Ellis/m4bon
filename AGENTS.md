@@ -192,7 +192,7 @@ Three-column layout in `-render` and TUI: `CHORDS : NOTES : LYRICS`. Columns onl
 
 ```
 DSL text (newline-separated measures) → sanitize → tokenize (per line)
-         → scanMeasureDirectives (K, M, B, :H, :L) → parseGroup
+         → scanMeasureDirectives (K, M, :H, :L) → parseGroup
          → resolveDurations → splitAtBarline → splitNonStandardDurations → resolveOctaves → MusicXML
 ```
 
@@ -221,7 +221,8 @@ Usage: m4bon [options] [dsl]
   -tui         Launch interactive TUI performance/learning tool
   -bpm float   Tempo in BPM for TUI mode (default 120)
 
-Time and key signatures are specified in the DSL via K... and M... directives:
+Time and key signatures are specified in the DSL via K... and M... directives.
+**Multi-line input requires an explicit M... directive on the first line:**
   m4bon "M4/4 c d e f"
   m4bon "KE& M6/8 abc def"
 

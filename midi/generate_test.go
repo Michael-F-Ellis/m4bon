@@ -137,7 +137,7 @@ func TestGenerateSMF_Sustains(t *testing.T) {
 }
 
 func TestGenerateSMF_CrossMeasureTie(t *testing.T) {
-	measures := parseDSL(t, "a - | a b")
+	measures := parseDSL(t, "M2/4 a - | a b")
 	data, _, err := GenerateSMF(measures, 120)
 	if err != nil {
 		t.Fatalf("GenerateSMF: %v", err)

@@ -598,7 +598,7 @@ func TestParseDSLWithComments(t *testing.T) {
 }
 
 func TestParseDSL_NoComments(t *testing.T) {
-	r := ParseDSL([]string{"c d e f", "g a b c"})
+	r := ParseDSL([]string{"M4/4 c d e f", "g a b c"})
 
 	if r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)

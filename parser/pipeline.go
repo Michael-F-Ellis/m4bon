@@ -647,12 +647,6 @@ func totalTicks(events []Event) int {
 	return maxTick
 }
 
-// deriveTimeSig derives a time signature from a number of beats and a beat duration.
-// The result is numBeats * beat.Num / beat.Den, preserving musical meaning (no simplification).
-func deriveTimeSig(numBeats int, beat BeatDuration) (int, int) {
-	return numBeats * beat.Num, beat.Den
-}
-
 // fifthsToAccidentalMap builds a map from pitch letter to its key-signature accidental.
 // fifths: circle of fifths position (positive=sharps, negative=flats).
 func fifthsToAccidentalMap(fifths int) map[string]int {
@@ -670,7 +664,7 @@ func effectiveAccidental(letter string, explicitAcc int, explicitNatural bool, k
 
 // --- Main parse entry point ---
 
-// measureDirectives holds parsed K, M, B directives for a single measure.
+// measureDirectives holds parsed K, M directives for a single measure.
 type measureDirectives struct {
 	fifths        int
 	timeNum       int
@@ -678,7 +672,6 @@ type measureDirectives struct {
 	beat          BeatDuration
 	beatTokens    []Token
 	explicitMeter bool // true if this measure has its own M directive
-	hasBeatCode   bool // true if B directive was found
 }
 
 // splitMeasures splits tokens at | boundaries into measure groups.
@@ -713,25 +706,8 @@ func scanMeasureDirectives(tokens []Token, defaultFifths, defaultTimeNum, defaul
 			}
 			continue
 		}
-		if (strings.HasPrefix(raw, "b") || strings.HasPrefix(raw, "B")) && len(raw) > 1 {
-			bc := strings.ToUpper(raw[1:])
-			if bd, ok := BeatDurationCodes[bc]; ok {
-				md.hasBeatCode = true
-				md.beat = bd
-				continue
-			}
-			// Unknown beat suffix — treat as notation token
-			foundNotation = true
-			md.beatTokens = append(md.beatTokens, tok)
-			continue
-		}
 		foundNotation = true
 		md.beatTokens = append(md.beatTokens, tok)
-	}
-
-	// Derive time sig from beat when no explicit M but B directive present
-	if md.hasBeatCode && !md.explicitMeter {
-		md.timeNum, md.timeDen = deriveTimeSig(len(md.beatTokens), md.beat)
 	}
 
 	return md
@@ -847,10 +823,7 @@ func measureHasNote(events []Event) bool {
 
 // validateExplicitMeter checks that events fill the expected measure duration.
 // Returns a formatted error string, or empty string if valid.
-func validateExplicitMeter(events []Event, timeNum, timeDen int, tokens []Token, measureIdx int, hasSecondMeasure, hasExplicitMeter, isFirstMeasure bool) string {
-	if !hasExplicitMeter {
-		return ""
-	}
+func validateExplicitMeter(events []Event, timeNum, timeDen int, tokens []Token, measureIdx int, hasSecondMeasure, isFirstMeasure bool) string {
 	expectedTicks := timeSigTicks(timeNum, timeDen)
 	actualTicks := totalTicks(events)
 	if actualTicks == expectedTicks {
@@ -1014,7 +987,6 @@ func ParseDSLWithComments(lines []string, comments map[int][]string) DSLResult {
 	currentFifths := md0.fifths
 	currentTimeNum := md0.timeNum
 	currentTimeDen := md0.timeDen
-	hasInitialMeter := md0.explicitMeter
 
 	// Save these for DSLResult return values
 	initialFifths := currentFifths
@@ -1039,10 +1011,8 @@ func ParseDSLWithComments(lines []string, comments map[int][]string) DSLResult {
 		effectiveTimeNum := md.timeNum
 		effectiveTimeDen := md.timeDen
 
-		// Resolve beat if no B directive
-		if !md.hasBeatCode {
-			md.beat = ResolveBeatDuration(effectiveTimeNum, effectiveTimeDen)
-		}
+		// Resolve beat from time signature
+		md.beat = ResolveBeatDuration(effectiveTimeNum, effectiveTimeDen)
 
 		// Parse beat groups
 		groups, numGroups, groupErrs := parseBeatTokens(md.beatTokens, lastMeasureHadNote)
@@ -1069,23 +1039,25 @@ func ParseDSLWithComments(lines []string, comments map[int][]string) DSLResult {
 		// Mark cross-measure ties
 		markCrossMeasureTies(events, measures)
 
-		// Auto-detect time sig from content when no explicit directive
-		if !md.explicitMeter && !md.hasBeatCode && hasMultipleLines && !(mi == 0 && hasInitialMeter) {
-			actualTicks := totalTicks(events)
-			expectedTicks := timeSigTicks(effectiveTimeNum, effectiveTimeDen)
-			if actualTicks != expectedTicks && actualTicks > 0 {
-				g := frac.GCD(actualTicks, frac.TicksPerWholeNote)
-				effectiveTimeNum = actualTicks / g
-				effectiveTimeDen = frac.TicksPerWholeNote / g
+		// Determine if we have a definitive meter to validate against
+		meterValid := hasMultipleLines || md.explicitMeter
+
+		// Require explicit meter on first line of multi-measure input
+		if mi == 0 && !md.explicitMeter && hasMultipleLines {
+			errs = append(errs, "Measure 1: no meter signature (M... directive required for multi-measure input)")
+			meterValid = false
+			if len(errs) >= 10 {
+				break
 			}
 		}
 
-		// Validate against explicit M directive
-		hasExplicitMeter := (mi == 0 && hasInitialMeter && hasMultipleLines) || md.explicitMeter
-		if errStr := validateExplicitMeter(events, effectiveTimeNum, effectiveTimeDen, tokens, mi, hasSecondMeasure, hasExplicitMeter, mi == 0); errStr != "" {
-			errs = append(errs, errStr)
-			if len(errs) >= 10 {
-				break
+		// Validate meter against time signature
+		if meterValid {
+			if errStr := validateExplicitMeter(events, effectiveTimeNum, effectiveTimeDen, tokens, mi, hasSecondMeasure, mi == 0); errStr != "" {
+				errs = append(errs, errStr)
+				if len(errs) >= 10 {
+					break
+				}
 			}
 		}
 

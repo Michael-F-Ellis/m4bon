@@ -1,3 +1,3 @@
-# beat-directive — BQ. gives 6/8 time signature
-BQ. a b c
+# beat-directive — M9/8 gives 9/8 time signature
+M9/8 a b c
 d e f

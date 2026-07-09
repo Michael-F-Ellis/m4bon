@@ -220,18 +220,6 @@ type MeasureResult struct {
 	TrailingCommentLines []string
 }
 
-// BeatDuration codes for B directive.
-var BeatDurationCodes = map[string]BeatDuration{
-	"W":  {1, 1},
-	"H":  {1, 2},
-	"Q":  {1, 4},
-	"Q.": {3, 8},
-	"E":  {1, 8},
-	"E.": {3, 16},
-	"S":  {1, 16},
-	"T":  {1, 32},
-}
-
 
 
 // KeySignature represents a key signature via its position on the circle of fifths.

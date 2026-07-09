@@ -1,3 +1,3 @@
 # cross-bar-chord-tie — chord sustained across barline with sustains
-a b c (dfa)
+M4/4 a b c (dfa)
 - - - -
