@@ -13,8 +13,8 @@ const go = new Go();
 async function bootstrapWASM() {
   try {
     const scriptEl = document.querySelector('script[src*="app.js"]');
-    const version = scriptEl ? new URL(scriptEl.src, window.location.href).searchParams.get('v') : '0.23.1';
-    const resp = await fetch(`m4bon.wasm?v=${version || '0.23.1'}`);
+    const version = scriptEl ? new URL(scriptEl.src, window.location.href).searchParams.get('v') : '0.24.0';
+    const resp = await fetch(`m4bon.wasm?v=${version || '0.24.0'}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const bytes = await resp.arrayBuffer();
     const result = await WebAssembly.instantiate(bytes, go.importObject);
@@ -41,6 +41,7 @@ class M4bonApp {
     this.endMeasure = 0;
     this.showSubscripts = true;
     this.showComments = true;
+    this.keypadActive = false;
     this.metronomeOn = true;
     this.rootsOn = false;
     this.backbeatsOn = false;
@@ -70,6 +71,8 @@ class M4bonApp {
     this._recordMeasureSecs = null;
     this._recordCountInSec = 0;
     this._recMimeType = '';
+    this._activeActionIdx = -1;
+    this._popoverEl = null;
     this.playbackTimer = null;
     this.measureHighlightTimer = null;
     this.debounceTimer = null;
@@ -164,6 +167,32 @@ class M4bonApp {
     document.getElementById('examples-backdrop').addEventListener('click', () => this.closeExamplesDialog());
     document.getElementById('examples-close').addEventListener('click', () => this.closeExamplesDialog());
 
+    this.btnToggleKeypad = document.getElementById('btn-toggle-keypad');
+    this.keypadEl = document.getElementById('virtual-keypad');
+
+    this.measureActionsEl = document.getElementById('measure-actions');
+    this.actionMeasureIdxEl = document.getElementById('action-measure-idx');
+    this.btnEditMeasure = document.getElementById('btn-edit-measure');
+    this.btnAddComment = document.getElementById('btn-add-comment');
+    this.btnClearComments = document.getElementById('btn-clear-comments');
+
+    this.btnToggleKeypad.addEventListener('click', () => this.toggleKeypad());
+    this.keypadEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      this.handleKeypadPress(btn);
+    });
+
+    this.btnEditMeasure.addEventListener('click', () => {
+      if (this._activeActionIdx >= 0) this.focusMeasure(this._activeActionIdx);
+    });
+    this.btnAddComment.addEventListener('click', () => {
+      if (this._activeActionIdx >= 0) this.insertCommentBefore(this._activeActionIdx);
+    });
+    this.btnClearComments.addEventListener('click', () => {
+      if (this._activeActionIdx >= 0) this.clearComments(this._activeActionIdx);
+    });
+
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     window.addEventListener('resize', () => this.autoResizeTextarea());
   }
@@ -239,10 +268,28 @@ class M4bonApp {
         this.measuresEl.innerHTML = result.ok;
         this.highlightMeasures();
         this.highlightCursorMeasure();
+        this.wireMeasureNumClicks();
       }
     } catch (e) {
       // WASM not ready
     }
+  }
+
+  wireMeasureNumClicks() {
+    this.measuresEl.querySelectorAll('.m4bon-measure-num').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(el.dataset.idx);
+        if (!isNaN(idx)) this.showPopover(el, idx);
+      });
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          const idx = parseInt(el.dataset.idx);
+          if (!isNaN(idx)) this.showPopover(el, idx);
+        }
+      });
+    });
   }
 
   highlightMeasures() {
@@ -328,6 +375,43 @@ class M4bonApp {
       allElements[renderedIdx].classList.add('m4bon-cursor');
       allElements[renderedIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
+
+    // Update action bar for cursor-linked measure
+    this._updateActionBar(renderedIdx, allElements);
+  }
+
+  _updateActionBar(renderedIdx, allElements) {
+    const totalMeasures = this.measuresEl.querySelectorAll('.m4bon-measure').length;
+    if (totalMeasures === 0 || this.isPlaying || this.isRecording) {
+      this.measureActionsEl.classList.remove('visible');
+      this._activeActionIdx = -1;
+      return;
+    }
+
+    // Walk from renderedIdx backward to find the nearest measure element
+    let measureIdx = -1;
+    for (let i = renderedIdx; i >= 0 && i < allElements.length; i--) {
+      const el = allElements[i];
+      if (el.classList.contains('m4bon-measure')) {
+        measureIdx = parseInt(el.dataset.idx);
+        break;
+      }
+    }
+    if (measureIdx < 0 || measureIdx >= totalMeasures) {
+      this.measureActionsEl.classList.remove('visible');
+      this._activeActionIdx = -1;
+      return;
+    }
+
+    this._activeActionIdx = measureIdx;
+    this.actionMeasureIdxEl.textContent = measureIdx + 1;
+    this.measureActionsEl.classList.add('visible');
+
+    // Check if this measure has comment lines
+    const measureEl = this.measuresEl.querySelector(`.m4bon-measure[data-idx="${measureIdx}"]`);
+    const hasComments = measureEl && measureEl.previousElementSibling &&
+      measureEl.previousElementSibling.classList.contains('m4bon-comment-line');
+    this.btnClearComments.style.display = hasComments ? '' : 'none';
   }
 
   updateRangeDisplay() {
@@ -1359,6 +1443,157 @@ class M4bonApp {
     });
   }
 
+  // --- Measure Actions ---
+
+  showPopover(anchorEl, idx) {
+    this.dismissPopover();
+
+    const popover = document.createElement('div');
+    popover.className = 'm4bon-popover';
+    popover.innerHTML =
+      '<button data-action="edit">&#9998; Edit measure</button>' +
+      '<button data-action="comment">+ Add comment above</button>' +
+      '<div class="popover-divider"></div>' +
+      '<button data-action="clear" class="popover-danger">&mdash; Clear comments</button>';
+
+    popover.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      switch (btn.dataset.action) {
+        case 'edit': this.focusMeasure(idx); break;
+        case 'comment': this.insertCommentBefore(idx); break;
+        case 'clear': this.clearComments(idx); break;
+      }
+      this.dismissPopover();
+    });
+
+    document.body.appendChild(popover);
+
+    // Position below anchor, left-aligned
+    const rect = anchorEl.getBoundingClientRect();
+    let left = rect.left;
+    let top = rect.bottom + 4;
+    // Keep within viewport
+    if (left + 160 > window.innerWidth) left = window.innerWidth - 170;
+    if (left < 4) left = 4;
+    popover.style.left = left + 'px';
+    popover.style.top = top + 'px';
+
+    // Backdrop for click-outside dismissal
+    const backdrop = document.createElement('div');
+    backdrop.id = 'popover-backdrop';
+    backdrop.addEventListener('click', () => this.dismissPopover());
+    backdrop.addEventListener('touchstart', () => this.dismissPopover());
+    document.body.appendChild(backdrop);
+
+    this._popoverEl = popover;
+
+    // Escape key dismisses
+    this._popoverKeyHandler = (e) => {
+      if (e.key === 'Escape') this.dismissPopover();
+    };
+    document.addEventListener('keydown', this._popoverKeyHandler);
+  }
+
+  dismissPopover() {
+    if (this._popoverEl) {
+      this._popoverEl.remove();
+      this._popoverEl = null;
+    }
+    const bd = document.getElementById('popover-backdrop');
+    if (bd) bd.remove();
+    if (this._popoverKeyHandler) {
+      document.removeEventListener('keydown', this._popoverKeyHandler);
+      this._popoverKeyHandler = null;
+    }
+  }
+
+  focusMeasure(idx) {
+    const lines = this.dslInput.value.split('\n');
+    let measureLine = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (!t) continue;
+      if (t.startsWith('#') && (t.length === 1 || t[1] === ' ')) continue;
+      if (t.startsWith('!')) continue;
+      if (measureLine === idx) {
+        const before = lines.slice(0, i).join('\n');
+        const pos = before.length + (before.length > 0 ? 1 : 0);
+        this.dslInput.focus();
+        this.dslInput.setSelectionRange(pos, pos);
+        // Estimate scroll position to bring line into view
+        const totalLen = lines.join('\n').length;
+        const ratio = pos / (totalLen || 1);
+        this.dslInput.scrollTop = Math.round(ratio * this.dslInput.scrollHeight);
+        this.highlightCursorMeasure();
+        return;
+      }
+      measureLine++;
+    }
+  }
+
+  insertCommentBefore(idx) {
+    const lines = this.dslInput.value.split('\n');
+    let measureLine = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (!t) continue;
+      if (t.startsWith('#') && (t.length === 1 || t[1] === ' ')) continue;
+      if (t.startsWith('!')) continue;
+      if (measureLine === idx) {
+        const before = lines.slice(0, i).join('\n');
+        const after = lines.slice(i).join('\n');
+        const prefix = before.length > 0 ? '\n' : '';
+        this.dslInput.value = before + prefix + '! ' + '\n' + after;
+        this.dsl = this.dslInput.value;
+        // Place cursor after the inserted "! "
+        const cursorPos = before.length + prefix.length + 2;
+        this.dslInput.setSelectionRange(cursorPos, cursorPos);
+        this.dslInput.dispatchEvent(new Event('input'));
+        this.autoResizeTextarea();
+        return;
+      }
+      measureLine++;
+    }
+  }
+
+  clearComments(idx) {
+    const lines = this.dslInput.value.split('\n');
+    let measureLine = 0;
+    let commentStart = -1;
+    let commentEnd = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (!t) {
+        // Blank lines between comments and the measure don't break the comment block
+        // but we ignore them for simplicity — just collect consecutive ! lines
+        continue;
+      }
+      if (t.startsWith('#') && (t.length === 1 || t[1] === ' ')) continue;
+      if (t.startsWith('!')) {
+        if (commentStart === -1) commentStart = i;
+        commentEnd = i;
+        continue;
+      }
+      if (measureLine === idx) {
+        // Found the measure — comments are lines between commentStart and i (exclusive)
+        if (commentStart === -1) return; // no comments
+        // Remove blank lines immediately before the comment block too
+        let removeStart = commentStart;
+        while (removeStart > 0 && lines[removeStart - 1].trim() === '') removeStart--;
+        const remaining = [...lines.slice(0, removeStart), ...lines.slice(i)];
+        this.dslInput.value = remaining.join('\n');
+        this.dsl = this.dslInput.value;
+        this.dslInput.dispatchEvent(new Event('input'));
+        this.autoResizeTextarea();
+        return;
+      }
+      measureLine++;
+      commentStart = -1;
+      commentEnd = -1;
+    }
+  }
+
   openExamplesDialog() {
     const modal = document.getElementById('examples-modal');
     const list = document.getElementById('examples-list');
@@ -1400,6 +1635,61 @@ class M4bonApp {
     this.statusText.textContent = `Loaded example: ${ex.title}`;
   }
 
+  // --- Virtual Keypad ---
+
+  toggleKeypad(forceState) {
+    this.keypadActive = forceState !== undefined ? forceState : !this.keypadActive;
+    if (this.keypadActive) {
+      this.btnToggleKeypad.classList.add('active');
+      this.btnToggleKeypad.style.background = 'var(--purple)';
+      this.dslInput.inputMode = 'none';
+      this.keypadEl.classList.remove('hidden');
+      this.dslInput.focus();
+    } else {
+      this.btnToggleKeypad.classList.remove('active');
+      this.btnToggleKeypad.style.background = '';
+      this.dslInput.inputMode = '';
+      this.keypadEl.classList.add('hidden');
+    }
+    localStorage.setItem('m4bon-keypad-active', this.keypadActive);
+    this.autoResizeTextarea();
+  }
+
+  handleKeypadPress(btn) {
+    const input = this.dslInput;
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    const text = input.value;
+
+    const val = btn.dataset.val;
+    const action = btn.dataset.action;
+
+    let newStart = start;
+
+    if (val !== undefined) {
+      newStart = start + val.length;
+      input.value = text.substring(0, start) + val + text.substring(end);
+    } else if (action === 'backspace') {
+      if (start !== end) {
+        input.value = text.substring(0, start) + text.substring(end);
+        newStart = start;
+      } else if (start > 0) {
+        input.value = text.substring(0, start - 1) + text.substring(end);
+        newStart = start - 1;
+      }
+    } else if (action === 'enter') {
+      newStart = start + 1;
+      input.value = text.substring(0, start) + '\n' + text.substring(end);
+    }
+
+    input.focus();
+    input.setSelectionRange(newStart, newStart);
+
+    // Trigger input event to re-run parser
+    const event = new Event('input', { bubbles: true });
+    input.dispatchEvent(event);
+  }
+
   // --- State persistence ---
 
   saveState() {
@@ -1410,6 +1700,7 @@ class M4bonApp {
       localStorage.setItem('m4bon-metroVol', this.metronomeVol);
       localStorage.setItem('m4bon-subscripts', this.showSubscripts);
       localStorage.setItem('m4bon-comments', this.showComments);
+      localStorage.setItem('m4bon-keypad-active', this.keypadActive);
     } catch (e) { /* localStorage unavailable */ }
   }
 
@@ -1426,11 +1717,17 @@ class M4bonApp {
       this.metronomeVol = parseInt(localStorage.getItem('m4bon-metroVol')) || 50;
       this.showSubscripts = localStorage.getItem('m4bon-subscripts') !== 'false';
       this.showComments = localStorage.getItem('m4bon-comments') !== 'false';
+      this.keypadActive = localStorage.getItem('m4bon-keypad-active') === 'true';
     } catch (e) { /* ignore */ }
     this.tempoDisplay.textContent = this.bpm;
     this.chkMetronome.checked = this.metronomeOn;
     this.chkSubscripts.checked = this.showSubscripts;
     this.chkComments.checked = this.showComments;
+
+    // Keypad initial state — must happen after DOM is ready
+    if (this.keypadActive) {
+      this.toggleKeypad(true);
+    }
   }
 
   // --- Keyboard shortcuts ---

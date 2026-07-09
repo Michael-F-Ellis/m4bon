@@ -32,11 +32,11 @@ func htmlClass(s StyleClass) string {
 // HTML string with CSS classes. Each measure becomes a <div>.
 func FormatHTML(measures []CellSeq, asciiLeaps bool) string {
 	var b strings.Builder
-	for _, cells := range measures {
-		b.WriteString(`<div class="m4bon-measure">`)
+	for mi, cells := range measures {
+		fmt.Fprintf(&b, `<div class="m4bon-measure" data-idx="%d">`, mi)
 		for i, c := range cells {
 			if i == 0 && strings.HasSuffix(c.Content, ":  ") {
-				b.WriteString(`<span class="m4bon-measure-num">`)
+				fmt.Fprintf(&b, `<span class="m4bon-measure-num" data-idx="%d" tabindex="0" role="button">`, mi)
 				b.WriteString(cellToHTML(c, asciiLeaps))
 				b.WriteString("</span>")
 			} else {
@@ -63,20 +63,20 @@ func FormatHTMLRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int, ascii
 			b.WriteString("</div>")
 		}
 
-		b.WriteString(`<div class="m4bon-measure">`)
+		b.WriteString(fmt.Sprintf(`<div class="m4bon-measure" data-idx="%d">`, row.MeasureIdx))
 
 		if maxChordW > 0 {
-			b.WriteString(fmt.Sprintf(`<span class="m4bon-chord-col" style="min-width:%dch">`, maxChordW))
+			fmt.Fprintf(&b, `<span class="m4bon-chord-col" style="min-width:%dch">`, maxChordW)
 			for _, c := range row.ChordCells {
 				b.WriteString(cellToHTML(c, asciiLeaps))
 			}
 			b.WriteString("</span>")
 		}
 
-		b.WriteString(fmt.Sprintf(`<span class="m4bon-note-col" style="min-width:%dch">`, maxNoteW))
+		fmt.Fprintf(&b, `<span class="m4bon-note-col" style="min-width:%dch">`, maxNoteW)
 		noteCells := row.NoteCells
 		if len(noteCells) > 0 && strings.HasSuffix(noteCells[0].Content, ":  ") {
-			b.WriteString(`<span class="m4bon-measure-num">`)
+			b.WriteString(fmt.Sprintf(`<span class="m4bon-measure-num" data-idx="%d" tabindex="0" role="button">`, row.MeasureIdx))
 			b.WriteString(cellToHTML(noteCells[0], asciiLeaps))
 			b.WriteString("</span>")
 			noteCells = noteCells[1:]
@@ -87,7 +87,7 @@ func FormatHTMLRows(rows []MeasureRow, maxChordW, maxNoteW, maxLyricW int, ascii
 		b.WriteString("</span>")
 
 		if maxLyricW > 0 {
-			b.WriteString(fmt.Sprintf(`<span class="m4bon-lyric-col" style="min-width:%dch">`, maxLyricW))
+			fmt.Fprintf(&b, `<span class="m4bon-lyric-col" style="min-width:%dch">`, maxLyricW)
 			for _, c := range row.LyricCells {
 				b.WriteString(cellToHTML(c, asciiLeaps))
 			}

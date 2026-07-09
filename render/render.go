@@ -326,6 +326,7 @@ func BuildRows(measures []parser.MeasureResult, showSubscripts bool, showComment
 	measureNumWidth := numWidth(lastNum)
 	for mi, m := range measures {
 		var row MeasureRow
+		row.MeasureIdx = mi
 
 		if anyChords {
 			row.ChordCells = buildChordCells(m)

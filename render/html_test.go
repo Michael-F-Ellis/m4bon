@@ -21,7 +21,7 @@ func TestFormatHTML_BasicNotes(t *testing.T) {
 	cells := rawCells(t, "M4/4 c d e f")
 	html := FormatHTML([]CellSeq{cells}, false)
 
-	if !strings.Contains(html, `<div class="m4bon-measure">`) {
+	if !strings.Contains(html, `<div class="m4bon-measure"`) {
 		t.Error("expected measure div wrapper")
 	}
 
@@ -105,7 +105,7 @@ func TestFormatHTML_MultipleMeasures(t *testing.T) {
 	cells := allMeasuresCells(t, "M4/4 c d e f | a b c d")
 	html := FormatHTML(cells, false)
 
-	count := strings.Count(html, `<div class="m4bon-measure">`)
+	count := strings.Count(html, `<div class="m4bon-measure"`)
 	if count != 2 {
 		t.Errorf("expected 2 measure divs, got %d", count)
 	}
@@ -185,7 +185,7 @@ func TestFormatHTML_MeasureNum(t *testing.T) {
 	cells := rawCells(t, "M4/4 c d e f")
 	html := FormatHTML([]CellSeq{cells}, false)
 
-	if !strings.Contains(html, `<span class="m4bon-measure-num">`) {
+	if !strings.Contains(html, `<span class="m4bon-measure-num" data-idx="0" tabindex="0" role="button">`) {
 		t.Error("expected measure-num span")
 	}
 	if !strings.Contains(html, `1:`) {
@@ -198,11 +198,11 @@ func TestFormatHTMLRows_MeasureDiv(t *testing.T) {
 	rows, maxCW, maxNW, maxLW := BuildRows(result.Measures, true, false)
 	html := FormatHTMLRows(rows, maxCW, maxNW, maxLW, false)
 
-	count := strings.Count(html, `<div class="m4bon-measure">`)
+	count := strings.Count(html, `<div class="m4bon-measure"`)
 	if count != 2 {
 		t.Errorf("expected 2 measure divs, got %d", count)
 	}
-	if !strings.Contains(html, `<span class="m4bon-measure-num">1:`) {
+	if !strings.Contains(html, `<span class="m4bon-measure-num" data-idx="0" tabindex="0" role="button">1:`) {
 		t.Error("expected measure number in FormatHTMLRows")
 	}
 }

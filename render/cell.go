@@ -42,6 +42,7 @@ type CellSeq []Cell
 // MeasureRow contains the three columns for one measure's display:
 // chord symbols, notation notes, and lyrics.
 type MeasureRow struct {
+	MeasureIdx           int      // index into the original measures slice (0-based)
 	ChordCells           CellSeq
 	CommentCells         CellSeq // comment block before the measure (from ! lines)
 	NoteCells            CellSeq
